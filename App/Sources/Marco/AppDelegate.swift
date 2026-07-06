@@ -22,6 +22,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if ReloadBenchRunner.runIfRequested() {
             return
         }
+        // Headless M3 verification (checkbox write-back, save, conflict
+        // banner) without a visible window.
+        if EditBenchRunner.runIfRequested() {
+            return
+        }
+        if StyleBenchRunner.runIfRequested() {
+            return
+        }
         // Suppress the automatic "Untitled" window macOS would otherwise
         // create for a document-based-looking app with no file yet — we
         // want the empty-state window instead, which WindowGroup(for:)

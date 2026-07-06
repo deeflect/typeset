@@ -20,6 +20,7 @@ struct BlockView: View {
         case .list:
             if let model = BlockStructureCache.shared.list(for: block) {
                 ListView(model: model)
+                    .environment(\.checkboxBlockStartLine, block.startLine)
             } else {
                 RawFallbackView(raw: block.rawText)
             }
@@ -32,6 +33,7 @@ struct BlockView: View {
         case .blockquote:
             if let model = BlockStructureCache.shared.quote(for: block) {
                 BlockquoteView(model: model)
+                    .environment(\.checkboxBlockStartLine, block.startLine)
             } else {
                 RawFallbackView(raw: block.rawText)
             }

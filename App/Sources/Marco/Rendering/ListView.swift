@@ -5,9 +5,10 @@ import SwiftUI
 /// `BlockStructure` off the real cmark-gfm AST: true nested depth (each
 /// level recurses into another `ListView` through `StructuredChildView`),
 /// correct ordered-list start/numbering, and loose/tight item spacing —
-/// rather than depth guessed from raw leading spaces. Task checkboxes get
-/// real checkbox visuals but are non-interactive this milestone
-/// (write-back lands in M3).
+/// rather than depth guessed from raw leading spaces. Task checkboxes are
+/// interactive (PLAN §5): a click toggles the item and writes the exact
+/// `- [ ]`/`- [x]` character back to disk via `checkboxToggleHandler`,
+/// without entering edit mode.
 struct ListView: View {
     let model: ListModel
     /// Nesting level, purely to vary the bullet glyph (•, ◦, ▪ …) the way
@@ -15,6 +16,9 @@ struct ListView: View {
     /// marker + content `HStack` — no separate offset needed.
     var depth: Int = 0
     @Environment(\.theme) private var theme
+    @Environment(\.checkboxBlockStartLine) private var blockStartLine
+    @Environment(\.checkboxToggleHandler) private var toggleHandler
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var itemSpacing: CGFloat { theme.scaled(model.isLoose ? 12 : 4) }
     private var childSpacing: CGFloat { theme.scaled(model.isLoose ? 8 : 4) }
@@ -46,10 +50,14 @@ struct ListView: View {
     @ViewBuilder
     private func marker(for item: ListModel.Item, number: Int) -> some View {
         if let checkbox = item.checkbox {
-            Image(systemName: checkbox == .checked ? "checkmark.square.fill" : "square")
-                .font(.system(size: theme.bodySize * theme.scale, weight: .regular))
-                .foregroundStyle(checkbox == .checked ? theme.accent : theme.textTertiary)
-                .frame(width: theme.scaled(20), alignment: .center)
+            CheckboxMarker(
+                checked: checkbox == .checked,
+                canToggle: blockStartLine >= 0 && item.checkboxLineOffset != nil && toggleHandler != nil,
+                reduceMotion: reduceMotion
+            ) {
+                guard blockStartLine >= 0, let lineOffset = item.checkboxLineOffset else { return }
+                toggleHandler?(blockStartLine, lineOffset, checkbox != .checked)
+            }
         } else if model.isOrdered {
             Text("\(number).")
                 .font(theme.bodyFont.monospacedDigit())
@@ -74,5 +82,51 @@ struct ListView: View {
 
     private func bulletScale(_ depth: Int) -> CGFloat {
         depth % 3 == 2 ? 0.7 : 1.0
+    }
+}
+
+/// A single task-list checkbox glyph. Clickable when `canToggle` (the
+/// owning block resolved a real line to write to and a write-back handler
+/// is installed); otherwise renders identically but inertly, matching the
+/// pre-M3 static appearance used by e.g. Quick Look/snapshot rendering.
+private struct CheckboxMarker: View {
+    let checked: Bool
+    let canToggle: Bool
+    let reduceMotion: Bool
+    let action: () -> Void
+
+    @Environment(\.theme) private var theme
+    @State private var isPressed = false
+
+    var body: some View {
+        let glyph = Image(systemName: checked ? "checkmark.square.fill" : "square")
+            .font(.system(size: theme.bodySize * theme.scale, weight: .regular))
+            .foregroundStyle(checked ? theme.accent : theme.textTertiary)
+            .frame(width: theme.scaled(20), alignment: .center)
+            .scaleEffect(isPressed && !reduceMotion ? 0.82 : 1.0)
+            .contentTransition(.symbolEffect(.replace))
+
+        if canToggle {
+            Button(action: toggle) {
+                glyph
+            }
+            .buttonStyle(.plain)
+            .help(checked ? "Mark as not done" : "Mark as done")
+        } else {
+            glyph
+        }
+    }
+
+    private func toggle() {
+        let spring = Animation.spring(response: 0.28, dampingFraction: 0.55)
+        if reduceMotion {
+            action()
+        } else {
+            withAnimation(spring) { isPressed = true }
+            withAnimation(spring.delay(0.05)) {
+                isPressed = false
+                action()
+            }
+        }
     }
 }

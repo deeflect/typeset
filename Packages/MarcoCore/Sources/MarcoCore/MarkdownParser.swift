@@ -112,6 +112,20 @@ public enum MarkdownParser {
         return (nil, text)
     }
 
+    /// How many lines of `text` are the frontmatter block (0 if none) —
+    /// the offset to add to a body-relative `Block.startLine` to get the
+    /// absolute line number in the full file text, or to subtract from an
+    /// absolute line (e.g. a source editor's caret line) to get a
+    /// body-relative one. Used by the M3 editor mode transition (PLAN §2
+    /// J4) to map between blocks and caret/scroll position without
+    /// duplicating frontmatter-detection logic outside this module.
+    public static func bodyLineOffset(in text: String) -> Int {
+        let normalized = normalizingLineEndings(text)
+        let (frontmatter, _) = splitFrontmatter(normalized)
+        guard let frontmatter else { return 0 }
+        return frontmatter.components(separatedBy: "\n").count
+    }
+
     private static let yamlKeyPattern = try! NSRegularExpression(pattern: #"^[A-Za-z0-9_-]+\s*:"#)
 
     private static func looksLikeYAMLKeyLine(_ line: Substring) -> Bool {
