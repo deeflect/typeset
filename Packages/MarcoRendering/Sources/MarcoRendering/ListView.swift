@@ -97,13 +97,23 @@ private struct CheckboxMarker: View {
 
     @Environment(\.theme) private var theme
     @State private var isPressed = false
+    @State private var isHovering = false
 
     var body: some View {
+        // On hover an unchecked box firms up from tertiary to secondary — a
+        // slight, quiet cue that it's live — while a checked box holds its
+        // accent. A faint rounded wash sits behind the glyph on hover too.
+        let tint: Color = checked ? theme.accent : (isHovering ? theme.textSecondary : theme.textTertiary)
         let glyph = Image(systemName: checked ? "checkmark.square.fill" : "square")
             .font(.system(size: theme.bodySize * theme.scale, weight: .regular))
-            .foregroundStyle(checked ? theme.accent : theme.textTertiary)
+            .foregroundStyle(tint)
             .frame(width: theme.scaled(20), alignment: .center)
             .scaleEffect(isPressed && !reduceMotion ? 0.82 : 1.0)
+            .background {
+                RoundedRectangle(cornerRadius: theme.scaled(5), style: .continuous)
+                    .fill(theme.chipFill.opacity(isHovering ? 1 : 0))
+                    .padding(theme.scaled(-1))
+            }
             .contentTransition(.symbolEffect(.replace))
 
         if canToggle {
@@ -111,6 +121,14 @@ private struct CheckboxMarker: View {
                 glyph
             }
             .buttonStyle(.plain)
+            .pointerStyle(.link)
+            .onHover { hovering in
+                if reduceMotion {
+                    isHovering = hovering
+                } else {
+                    withAnimation(Theme.Motion.feedback) { isHovering = hovering }
+                }
+            }
             .help(checked ? "Mark as not done" : "Mark as done")
         } else {
             glyph

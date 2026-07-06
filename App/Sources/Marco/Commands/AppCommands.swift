@@ -64,11 +64,11 @@ struct MarcoCommands: Commands {
 
         // MARK: View — sidebar, edit mode, zoom, follow mode
         CommandGroup(after: .toolbar) {
-            Button((model?.sidebarVisible ?? false) ? "Hide Outline" : "Show Outline") {
-                model?.toggleSidebar()
+            Button("Outline") {
+                model?.showOutlineMenu()
             }
             .keyboardShortcut("1", modifiers: .command)
-            .disabled(!hasDocument)
+            .disabled(!(model?.hasOutline ?? false))
 
             Button((model?.controller?.isEditing ?? false) ? "Done Editing" : "Edit Source") {
                 model?.toggleEditMode()

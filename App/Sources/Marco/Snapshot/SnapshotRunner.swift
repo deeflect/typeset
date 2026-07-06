@@ -14,15 +14,15 @@ import MarcoRendering
 ///   MARCO_SNAPSHOT=/path/to/file.md
 ///   MARCO_SNAPSHOT_OUT=/path/to/output/dir       (optional)
 ///   MARCO_SNAPSHOT_SCALE=1.0                      (optional text-size scale)
-///   MARCO_SNAPSHOT_VARIANT=reading|sidebar|find   (optional, default reading)
+///   MARCO_SNAPSHOT_VARIANT=reading|find           (optional, default reading)
 ///   MARCO_SNAPSHOT_FIND=needle                    (find variant query)
 ///
-/// The `sidebar` and `find` variants compose static stand-ins for the
-/// `NavigationSplitView` outline column and the ⌘F bar (neither of which
-/// `ImageRenderer` can host live), so the J3 features are visually
+/// The `find` variant composes a static stand-in for the ⌘F bar (which
+/// `ImageRenderer` can't host live), so the J3 feature is visually
 /// verifiable in CI. The floating-glass material and live scroll tracking
-/// they use in the running app can't rasterize headlessly — those need
-/// interactive eyes.
+/// it uses in the running app can't rasterize headlessly — those need
+/// interactive eyes. (The outline dropdown is a transient native menu with
+/// no headless-snapshot path.)
 @MainActor
 enum SnapshotRunner {
     static func runIfRequested() -> Bool {
@@ -81,8 +81,6 @@ enum SnapshotRunner {
     @ViewBuilder
     private static func rootView(variant: String, blocks: [Block], url: URL, theme: Theme, findQuery: String) -> some View {
         switch variant {
-        case "sidebar":
-            SnapshotSidebarScene(blocks: blocks, documentURL: url)
         case "find":
             SnapshotFindScene(blocks: blocks, documentURL: url, query: findQuery)
         case "empty":
@@ -143,46 +141,6 @@ private struct SnapshotColumn: View {
         .environment(\.documentBaseURL, documentURL)
         .environment(\.findHighlight, findHighlight)
         .environment(\.isSnapshot, true)
-    }
-}
-
-/// Static stand-in for the outline sidebar beside the reading column, with a
-/// mid-document heading marked current so the highlight is visible.
-private struct SnapshotSidebarScene: View {
-    let blocks: [Block]
-    let documentURL: URL?
-    @Environment(\.theme) private var theme
-
-    private var items: [OutlineItem] { OutlineBuilder.build(from: blocks) }
-    private var currentID: String? { items.isEmpty ? nil : items[items.count / 2].id }
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 0) {
-            VStack(alignment: .leading, spacing: 3) {
-                ForEach(items) { item in
-                    let isCurrent = item.id == currentID
-                    Text(item.title)
-                        .font(.system(size: 13, weight: item.level <= 2 ? .semibold : .regular))
-                        .foregroundStyle(isCurrent ? theme.accent : Color.primary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .padding(.leading, CGFloat(item.depth) * 12)
-                        .padding(.vertical, 3)
-                        .padding(.horizontal, 8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(isCurrent ? theme.accent.opacity(0.14) : Color.clear,
-                                    in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                }
-                Spacer(minLength: 0)
-            }
-            .frame(width: 260, alignment: .top)
-            .padding(.vertical, 20)
-            .padding(.horizontal, 10)
-            .background(theme.colorScheme == .dark ? Color(white: 0.11) : Color(white: 0.965))
-
-            SnapshotColumn(blocks: blocks, documentURL: documentURL)
-        }
-        .frame(alignment: .top)
     }
 }
 

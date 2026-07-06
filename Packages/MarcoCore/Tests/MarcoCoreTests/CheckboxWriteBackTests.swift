@@ -21,6 +21,25 @@ struct CheckboxWriteBackTests {
         #expect(result == "- [x] **bold** item with `code` and text\n")
     }
 
+    @Test func flipsExactlyTheTargetedItemAmongMany() {
+        // A list with multiple task items at mixed nesting; toggling item N
+        // must flip that line and leave every other byte untouched.
+        let text = """
+        - [ ] alpha
+        - [x] bravo
+          - [ ] bravo-child
+        - [ ] charlie
+        """
+        // Toggle the nested "bravo-child" (body line 2) on.
+        let result = CheckboxWriteBack.flip(fileText: text, blockStartLine: 0, itemLineOffset: 2, checked: true)
+        #expect(result == """
+        - [ ] alpha
+        - [x] bravo
+          - [x] bravo-child
+        - [ ] charlie
+        """)
+    }
+
     @Test func handlesIndentedNestedItem() {
         let text = "- parent\n  - [ ] child\n"
         let result = CheckboxWriteBack.flip(fileText: text, blockStartLine: 0, itemLineOffset: 1, checked: true)

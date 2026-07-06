@@ -14,11 +14,11 @@
 # Usage:
 #   Scripts/snapshot.sh <markdown-file> [out-dir] [variant] [find-query] [scale]
 #
-#   variant: reading (default) | sidebar | find
+#   variant: reading (default) | find
 #
 # Examples:
 #   Scripts/snapshot.sh Tests/Fixtures/sibling-demo/doc.md
-#   Scripts/snapshot.sh Tests/Fixtures/outline-demo.md .build-snap sidebar
+#   Scripts/snapshot.sh Tests/Fixtures/outline-demo.md .build-snap find needle
 set -eu
 
 cd "$(dirname "$0")/.."

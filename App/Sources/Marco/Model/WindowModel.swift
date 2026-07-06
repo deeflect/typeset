@@ -24,10 +24,19 @@ final class WindowModel {
     /// across navigation and survives live reloads.
     let find = FindSession()
 
-    /// Outline sidebar visibility (⌘1 / toolbar). Collapsed by default so the
-    /// J1 "just open it" reading view stays minimal; per-window because each
-    /// `WindowModel` instance is per-window.
-    var sidebarVisible = false
+    /// The heading whose section currently contains the top of the viewport,
+    /// tracked off the reading view's scroll position (debounced). Drives the
+    /// checkmark in the outline dropdown (⌘1 / toolbar). `nil` until the first
+    /// scroll signal or in a document with no headings.
+    private(set) var currentOutlineID: String?
+    private var outlineTrackTask: Task<Void, Never>?
+    /// After the dropdown jumps to a heading we set `currentOutlineID`
+    /// optimistically; the scroll tracker would otherwise re-derive it on its
+    /// debounce and flicker. Ignore tracker updates until this instant.
+    private var suppressOutlineTrackingUntil: Date = .distantPast
+    /// The toolbar's outline button view, captured so ⌘1 can pop the native
+    /// menu up anchored to it (mouse clicks anchor to it directly).
+    weak var outlineAnchor: NSView?
 
     /// The image currently shown in the full-window lightbox (PLAN §6), or
     /// `nil` when none. Presented at the window's top level by `DocumentWindow`
@@ -304,9 +313,85 @@ final class WindowModel {
         PDFExporter.print(blocks: controller.blocks)
     }
 
-    // MARK: - Sidebar
+    // MARK: - Outline dropdown
 
-    func toggleSidebar() { sidebarVisible.toggle() }
+    /// The document's flat heading outline (one entry per top-level heading),
+    /// rebuilt from the live block model so it tracks live reloads.
+    var outlineItems: [OutlineItem] { OutlineBuilder.build(from: controller?.blocks ?? []) }
+
+    /// Whether the dropdown is meaningful: a document needs at least two
+    /// headings to jump between. One or zero headings ⇒ button disabled.
+    var hasOutline: Bool { outlineItems.count > 1 }
+
+    /// Builds and pops up the native headings menu, anchored to the toolbar
+    /// button (falling back to the window's top-leading corner). Called by both
+    /// the toolbar button and ⌘1. No-op unless there's something to jump to.
+    func showOutlineMenu() {
+        let items = outlineItems
+        guard items.count > 1 else { return }
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+
+        // A single strong target routes every item's action back to
+        // `scrollToHeading`. Kept alive on the stack for the whole `popUp`
+        // (which runs a nested modal loop synchronously).
+        let target = OutlineMenuTarget { [weak self] id in
+            self?.scrollToHeading(id, reduceMotion: reduceMotion)
+        }
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for item in items {
+            let menuItem = NSMenuItem(title: item.title, action: #selector(OutlineMenuTarget.fire(_:)), keyEquivalent: "")
+            menuItem.indentationLevel = item.depth
+            menuItem.representedObject = item.id
+            menuItem.target = target
+            menuItem.state = item.id == currentOutlineID ? .on : .off
+            menu.addItem(menuItem)
+        }
+
+        if let anchor = outlineAnchor {
+            // The anchor is a plain (non-flipped) NSView behind the toolbar
+            // button, so its origin is bottom-left: y just below 0 drops the
+            // menu directly under the button with a hair of gap.
+            let dropPoint = NSPoint(x: 0, y: anchor.isFlipped ? anchor.bounds.height + 4 : -4)
+            menu.popUp(positioning: nil, at: dropPoint, in: anchor)
+        } else if let content = window?.contentView {
+            let y = content.isFlipped ? 8 : content.bounds.height - 8
+            menu.popUp(positioning: nil, at: NSPoint(x: 16, y: y), in: content)
+        }
+    }
+
+    /// Debounced current-section tracking off the reading view's top-most
+    /// block. Called by `DocumentRenderer` on every scroll-position change.
+    func trackOutline(topBlockID: String?) {
+        outlineTrackTask?.cancel()
+        outlineTrackTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(70))
+            guard let self, !Task.isCancelled else { return }
+            guard Date() >= self.suppressOutlineTrackingUntil else { return }
+            // Skip the O(n) scan while the window is being live-resized — the
+            // top block barely moves and the highlight re-settles on the next
+            // real scroll.
+            guard !self.isLiveResizing else { return }
+            self.currentOutlineID = self.nearestHeading(topBlockID: topBlockID)
+        }
+    }
+
+    /// The last heading at or above the top-most visible block — the section
+    /// the reader is currently inside.
+    private func nearestHeading(topBlockID: String?) -> String? {
+        let blocks = controller?.blocks ?? []
+        let items = outlineItems
+        guard let topBlockID, let topIndex = blocks.firstIndex(where: { $0.id == topBlockID }) else {
+            return items.first?.id
+        }
+        var current: String? = items.first?.id
+        for index in 0...topIndex where index < blocks.count {
+            if case .heading = blocks[index].kind {
+                current = blocks[index].id
+            }
+        }
+        return current
+    }
 
     /// The heading an outline tap just jumped to, tagged with a token so the
     /// reading view re-fires the arrival pulse even on a repeat tap of the same
@@ -330,6 +415,10 @@ final class WindowModel {
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) { controller.scrollPosition.scrollTo(id: id, anchor: .top) }
+        // Move the checkmark to the jumped-to heading now, and hold off the
+        // scroll tracker so it doesn't re-derive (and flicker) the same value.
+        currentOutlineID = id
+        suppressOutlineTrackingUntil = Date().addingTimeInterval(0.35)
         guard !reduceMotion else { return }
         outlineArrivalToken &+= 1
         outlineArrival = OutlineArrival(id: id, token: outlineArrivalToken)
@@ -349,6 +438,20 @@ final class WindowModel {
     }
 
     private func scrollKey(_ url: URL) -> String { "scrollAnchor:\(url.path)" }
+}
+
+/// Routes an `NSMenuItem`'s action back to a Swift closure, carrying the
+/// heading id in the item's `representedObject`. One instance backs the whole
+/// outline menu; it's retained for the life of the synchronous `popUp`.
+@MainActor
+final class OutlineMenuTarget: NSObject {
+    private let handler: (String) -> Void
+    init(_ handler: @escaping (String) -> Void) { self.handler = handler }
+
+    @objc func fire(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        handler(id)
+    }
 }
 
 /// GitHub-flavored heading anchor slugs, for resolving `[x](#heading)` links.

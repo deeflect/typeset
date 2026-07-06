@@ -49,6 +49,11 @@ struct DocumentRenderer: View {
             .pointerStyle(.horizontalText)
         }
         .scrollPosition($controller.scrollPosition)
+        // Track which heading's section the reader is in, for the outline
+        // dropdown's checkmark. Debounced inside the model.
+        .onChange(of: controller.scrollPosition.viewID as? String, initial: true) { _, top in
+            model.trackOutline(topBlockID: top)
+        }
         // The outline just jumped to a heading: pulse it so the instant landing
         // reads as an arrival rather than a teleport.
         .onChange(of: model.outlineArrival) { _, arrival in

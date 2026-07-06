@@ -3,11 +3,11 @@ import MarcoCore
 import MarcoRendering
 import SwiftUI
 
-/// The reading window. Owns one `WindowModel` (history, outline sidebar, ⌘F
+/// The reading window. Owns one `WindowModel` (history, outline dropdown, ⌘F
 /// session, scroll memory) which in turn holds the `DocumentReloadController`
 /// for whatever file is showing. The window itself is a thin renderer of that
-/// state: a `NavigationSplitView` with the native floating-glass outline
-/// column leading and the reading/editor surface trailing.
+/// state: the reading/editor surface, with the headings outline reached from a
+/// native dropdown in the toolbar (⌘1) rather than a persistent side column.
 struct DocumentWindow: View {
     let url: URL?
 
@@ -30,23 +30,12 @@ struct DocumentWindow: View {
             dim: NSColor(theme.textTertiary))
     }
 
-    private var sidebarVisibility: Binding<NavigationSplitViewVisibility> {
-        Binding(
-            get: { model.sidebarVisible ? .all : .detailOnly },
-            set: { model.sidebarVisible = ($0 != .detailOnly) })
-    }
-
     var body: some View {
         Group {
             if url == nil {
                 EmptyStateView()
             } else {
-                NavigationSplitView(columnVisibility: sidebarVisibility) {
-                    OutlineSidebar(model: model)
-                        .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 360)
-                } detail: {
-                    detailContent
-                }
+                detailContent
             }
         }
         .frame(minWidth: 640, minHeight: 480)
@@ -169,6 +158,18 @@ struct DocumentWindow: View {
                 Button { model.goForward() } label: { Image(systemName: "chevron.forward") }
                     .disabled(!model.canGoForward)
                     .help("Forward (⌘])")
+            }
+        }
+        if model.controller != nil {
+            ToolbarItem(placement: .navigation) {
+                Button { model.showOutlineMenu() } label: {
+                    Image(systemName: "list.bullet.indent")
+                        .frame(minWidth: 24, minHeight: 22)
+                        .background { OutlineAnchorAccessor { model.outlineAnchor = $0 } }
+                }
+                .disabled(!model.hasOutline)
+                .help(model.hasOutline ? "Outline (⌘1)" : "No headings to jump to")
+                .accessibilityLabel("Outline")
             }
         }
         ToolbarItem(placement: .principal) {

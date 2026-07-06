@@ -68,9 +68,16 @@ public struct Theme: Equatable {
         isDark ? Color.black.opacity(0.92) : Color.white
     }
 
-    public var quoteBar: Color { accent.opacity(isDark ? 0.85 : 0.75) }
+    /// The thin rule running down the leading edge of a blockquote. A muted
+    /// neutral, not the accent — a quote isn't interactive, so it shouldn't
+    /// borrow the link/selection color. Quiet enough to read as typographic
+    /// indentation, present enough to mark the quoted span in both themes.
+    public var quoteBar: Color {
+        isDark ? Color.white.opacity(0.22) : Color.black.opacity(0.18)
+    }
+    /// Quoted prose sits in the secondary text color — a step back from body
+    /// text, the way Notes/Pages set a quotation off without a tinted card.
     public var quoteText: Color { textSecondary }
-    public var quoteFill: Color { accent.opacity(isDark ? 0.06 : 0.045) }
 
     public var tableStroke: Color {
         isDark ? Color.white.opacity(0.10) : Color.black.opacity(0.09)
