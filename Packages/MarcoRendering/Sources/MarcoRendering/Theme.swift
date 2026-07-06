@@ -50,12 +50,14 @@ public struct Theme: Equatable {
     public var codeCardStroke: Color {
         isDark ? Color.white.opacity(0.08) : Color.black.opacity(0.07)
     }
+    /// Neutral "chip" fill for inline code — deliberately un-tinted (no
+    /// accent) so a code span never reads as a text-selection highlight, the
+    /// way an accent-blue fill did in dark mode. Matches how GitHub / Notes
+    /// style inline code: a faint gray surface, body-colored text.
     public var inlineCodeFill: Color {
-        isDark ? accent.opacity(0.20) : accent.opacity(0.11)
+        isDark ? Color(white: 1.0, opacity: 0.11) : Color(white: 0.0, opacity: 0.055)
     }
-    public var inlineCodeText: Color {
-        isDark ? Color(red: 0.86, green: 0.90, blue: 1.0) : textPrimary
-    }
+    public var inlineCodeText: Color { textPrimary }
 
     public var quoteBar: Color { accent.opacity(isDark ? 0.85 : 0.75) }
     public var quoteText: Color { textSecondary }

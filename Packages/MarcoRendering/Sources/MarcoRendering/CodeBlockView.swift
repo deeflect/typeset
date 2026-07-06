@@ -113,6 +113,7 @@ public struct CodeBlockView: View {
                 .contentTransition(.symbolEffect(.replace))
         }
         .buttonStyle(.plain)
+        .pointerStyle(.link)
         .help("Copy code")
     }
 

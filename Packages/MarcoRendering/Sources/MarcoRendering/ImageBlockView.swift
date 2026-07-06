@@ -74,6 +74,10 @@ struct ImageBlockView: View {
                     // (any image) — PLAN §6.
                     .overlay(alignment: .topTrailing) { zoomHint(for: displayImage) }
                     .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    // A clickable (zoomable) image is a pointer target, not
+                    // text — override the reading column's I-beam. Static in
+                    // snapshot / Quick Look (no lightbox): keep the arrow.
+                    .pointerStyle(presentLightbox == nil ? .default : .link)
                     .onHover { hovering = $0 }
                     .onTapGesture { presentLightbox?(displayImage) }
                     .onDrag { dragProvider(for: displayImage) }

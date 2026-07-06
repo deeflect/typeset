@@ -111,9 +111,44 @@ public enum InlineMarkdown {
             // scales with headings/body. We only tint it.
             attributed[range].backgroundColor = theme.inlineCodeFill
             attributed[range].foregroundColor = theme.inlineCodeText
+            // Telegram-style click-to-copy: carry the span's text on a custom
+            // `marco-copy://` link the app resolves by copying to the
+            // pasteboard. Set *after* `linkRanges` is collected above so this
+            // synthetic link never gets the accent link tint — the code chip
+            // styling stays, and the pointing-hand cursor is the affordance.
+            // Foreground stays `inlineCodeText` (set here), overriding the
+            // default link color. In Quick Look (no `openURL` handler) it is
+            // an inert no-op.
+            if let url = InlineCodeCopy.url(for: String(attributed[range].characters)) {
+                attributed[range].link = url
+            }
         }
         for range in linkRanges {
             attributed[range].foregroundColor = theme.linkColor
         }
+    }
+}
+
+/// Shared contract for the click-to-copy inline-code affordance: the writer
+/// (`InlineMarkdown`) encodes a code span's text into a `marco-copy://` URL
+/// attached as a link run; the app's reading view decodes it and copies to
+/// the pasteboard. Kept in one place so both ends agree on the format. The
+/// Quick Look extension renders the link but installs no handler, so it is a
+/// harmless no-op there.
+public enum InlineCodeCopy {
+    public static let scheme = "marco-copy"
+
+    /// Percent-encode everything but alphanumerics so `&`, `+`, `#`, spaces,
+    /// etc. round-trip losslessly (avoids `URLComponents`' query quirks).
+    public static func url(for code: String) -> URL? {
+        let encoded = code.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
+        return URL(string: "\(scheme)://copy?t=\(encoded)")
+    }
+
+    /// The code text for a `marco-copy://` URL, or `nil` if it isn't one.
+    public static func code(from url: URL) -> String? {
+        guard url.scheme == scheme,
+              let query = url.query, query.hasPrefix("t=") else { return nil }
+        return String(query.dropFirst(2)).removingPercentEncoding
     }
 }

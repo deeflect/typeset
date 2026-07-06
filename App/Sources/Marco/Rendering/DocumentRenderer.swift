@@ -13,6 +13,9 @@ struct DocumentRenderer: View {
     let model: WindowModel
     let documentURL: URL?
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var copyToast = false
+    @State private var copyToastTask: Task<Void, Never>?
 
     var body: some View {
         ScrollView {
@@ -29,9 +32,16 @@ struct DocumentRenderer: View {
             .padding(.top, theme.contentTopPadding)
             .padding(.bottom, theme.contentBottomPadding)
             .frame(maxWidth: .infinity, alignment: .center)
+            // Keep a stable I-beam across the whole reading column, including
+            // the inter-block padding gaps where a per-block `.textSelection`
+            // I-beam would otherwise flicker back to the arrow cursor.
+            // Interactive descendants (links, the code-copy button, images)
+            // override this with their own pointer.
+            .pointerStyle(.horizontalText)
         }
         .scrollPosition($controller.scrollPosition)
         .background(theme.background)
+        .overlay(alignment: .top) { copyHUD }
         .environment(\.documentBaseURL, documentURL)
         // Zero cost when find is closed: `highlightContext` is nil, so block
         // views short-circuit all find work.
@@ -39,10 +49,58 @@ struct DocumentRenderer: View {
         .environment(\.openURL, OpenURLAction { url in handle(link: url) })
     }
 
+    /// A small glass "Copied" pill that fades in near the top of the window
+    /// after a click-to-copy on an inline-code span (Xcode-style, not a web
+    /// toast). Respects Reduce Motion by snapping instead of fading.
+    @ViewBuilder
+    private var copyHUD: some View {
+        if copyToast {
+            Label("Copied", systemImage: "checkmark")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(theme.textPrimary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(.regularMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(theme.chipStroke, lineWidth: 1))
+                .padding(.top, 14)
+                .transition(reduceMotion ? .identity : .opacity.combined(with: .move(edge: .top)))
+                .allowsHitTesting(false)
+        }
+    }
+
+    /// Copy an inline-code span to the pasteboard and flash the HUD.
+    private func copyInlineCode(_ code: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(code, forType: .string)
+        copyToastTask?.cancel()
+        if reduceMotion {
+            copyToast = true
+        } else {
+            withAnimation(.easeOut(duration: 0.18)) { copyToast = true }
+        }
+        copyToastTask = Task {
+            try? await Task.sleep(for: .seconds(1.0))
+            guard !Task.isCancelled else { return }
+            if reduceMotion {
+                copyToast = false
+            } else {
+                withAnimation(.easeOut(duration: 0.25)) { copyToast = false }
+            }
+        }
+    }
+
     /// Relative `.md` links navigate in-window (with history); `#anchor` links
     /// scroll to the matching heading; other local files reveal in Finder;
     /// http(s) and everything else fall through to the system.
     private func handle(link url: URL) -> OpenURLAction.Result {
+        // Click-to-copy inline code (Telegram-style). Handled entirely in the
+        // app; the Quick Look extension has no `openURL` handler, so the same
+        // link is an inert no-op there.
+        if let code = InlineCodeCopy.code(from: url) {
+            copyInlineCode(code)
+            return .handled
+        }
+
         // Pure in-document anchor (`#heading`): no path, just a fragment.
         if (url.scheme == nil), url.path.isEmpty, let fragment = url.fragment {
             model.scrollToAnchor(fragment)
