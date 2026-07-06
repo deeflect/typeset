@@ -52,6 +52,13 @@ struct DocumentWindow: View {
         .environment(\.checkboxToggleHandler) { blockStartLine, lineOffset, checked in
             model.controller?.toggleCheckbox(blockStartLine: blockStartLine, itemLineOffset: lineOffset, checked: checked)
         }
+        .environment(\.presentLightbox) { model.lightboxImage = $0 }
+        .overlay {
+            if let image = model.lightboxImage {
+                LightboxView(image: image) { model.lightboxImage = nil }
+                    .transition(.opacity)
+            }
+        }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: textScale)
         .toolbar { toolbarContent }
         .background { WindowAccessor { model.window = $0 } }

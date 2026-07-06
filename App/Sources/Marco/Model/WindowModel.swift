@@ -28,6 +28,11 @@ final class WindowModel {
     /// `WindowModel` instance is per-window.
     var sidebarVisible = false
 
+    /// The image currently shown in the full-window lightbox (PLAN §6), or
+    /// `nil` when none. Presented at the window's top level by `DocumentWindow`
+    /// so it escapes the reading column's measure clipping.
+    var lightboxImage: NSImage?
+
     /// A quiet, non-modal hint shown when a relative link points at a file we
     /// can't read (sandbox scope not granted). Never a modal (PLAN §4).
     private(set) var accessHint: String?

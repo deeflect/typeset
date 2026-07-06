@@ -33,9 +33,11 @@ struct ImageBlockView: View {
     @Environment(\.theme) private var theme
     @Environment(\.documentBaseURL) private var baseURL
     @Environment(\.isSnapshot) private var isSnapshot
+    @Environment(\.presentLightbox) private var presentLightbox
 
     @State private var image: NSImage?
     @State private var failure: LoadFailure?
+    @State private var hovering = false
 
     /// Distinguishes a plain "unavailable" placeholder from one where the
     /// sandbox is the reason — the latter gets a quiet "Allow access"
@@ -67,6 +69,15 @@ struct ImageBlockView: View {
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .strokeBorder(theme.codeCardStroke, lineWidth: 1)
                     )
+                    // Click to zoom in a Quick Look-style lightbox; drag the
+                    // image out to Finder (local file) or into another app
+                    // (any image) — PLAN §6.
+                    .overlay(alignment: .topTrailing) { zoomHint(for: displayImage) }
+                    .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .onHover { hovering = $0 }
+                    .onTapGesture { presentLightbox?(displayImage) }
+                    .onDrag { dragProvider(for: displayImage) }
+                    .help(presentLightbox == nil ? "" : "Click to zoom")
             } else if failure != nil || isSnapshot {
                 placeholder
             } else {
@@ -83,6 +94,34 @@ struct ImageBlockView: View {
             guard failure != nil else { return }
             Task { await load() }
         }
+    }
+
+    /// A quiet magnifier badge that fades in on hover, signalling the image
+    /// is clickable to zoom. Suppressed when there's no lightbox to present
+    /// (snapshot / Quick Look).
+    @ViewBuilder
+    private func zoomHint(for _: NSImage) -> some View {
+        if presentLightbox != nil {
+            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white)
+                .padding(6)
+                .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .padding(10)
+                .opacity(hovering ? 1 : 0)
+                .animation(.easeOut(duration: 0.15), value: hovering)
+                .allowsHitTesting(false)
+        }
+    }
+
+    /// Drag payload: the on-disk file for a local image (so a drop in Finder
+    /// copies the real file), otherwise the decoded image itself.
+    private func dragProvider(for displayImage: NSImage) -> NSItemProvider {
+        if let url = resolvedURL(), url.isFileURL,
+           let provider = NSItemProvider(contentsOf: url) {
+            return provider
+        }
+        return NSItemProvider(object: displayImage)
     }
 
     @ViewBuilder
