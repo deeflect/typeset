@@ -13,6 +13,7 @@ struct CodeBlockView: View {
     var childID: Int? = nil
     @Environment(\.theme) private var theme
     @Environment(\.isSnapshot) private var isSnapshot
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.findHighlight) private var findHighlight
     @Environment(\.findBlockID) private var findBlockID
 
@@ -112,12 +113,20 @@ struct CodeBlockView: View {
     private func copy() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(code, forType: .string)
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { copied = true }
+        if reduceMotion {
+            copied = true
+        } else {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { copied = true }
+        }
         copyResetTask?.cancel()
         copyResetTask = Task {
             try? await Task.sleep(for: .seconds(1.4))
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.25)) { copied = false }
+            if reduceMotion {
+                copied = false
+            } else {
+                withAnimation(.easeOut(duration: 0.25)) { copied = false }
+            }
         }
     }
 

@@ -52,7 +52,7 @@ struct DocumentWindow: View {
         .environment(\.checkboxToggleHandler) { blockStartLine, lineOffset, checked in
             model.controller?.toggleCheckbox(blockStartLine: blockStartLine, itemLineOffset: lineOffset, checked: checked)
         }
-        .animation(.easeInOut(duration: 0.22), value: textScale)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: textScale)
         .toolbar { toolbarContent }
         .background { WindowAccessor { model.window = $0 } }
         .focusedValue(\.windowModel, model)

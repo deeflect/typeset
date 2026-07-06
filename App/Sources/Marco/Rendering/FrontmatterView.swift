@@ -5,6 +5,7 @@ import SwiftUI
 struct FrontmatterView: View {
     let raw: String
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expanded = false
 
     private var fields: [(key: String, value: String)] { FrontmatterView.parse(raw) }
@@ -12,8 +13,12 @@ struct FrontmatterView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
+                if reduceMotion {
                     expanded.toggle()
+                } else {
+                    withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
+                        expanded.toggle()
+                    }
                 }
             } label: {
                 HStack(spacing: theme.scaled(8)) {
@@ -43,7 +48,7 @@ struct FrontmatterView: View {
                     ForEach(fields, id: \.key) { field in
                         GridRow {
                             Text(field.key)
-                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .font(.system(size: 12, weight: .medium, design: .monospaced).smallCaps())
                                 .foregroundStyle(theme.textSecondary)
                                 .textSelection(.enabled)
                             Text(field.value)

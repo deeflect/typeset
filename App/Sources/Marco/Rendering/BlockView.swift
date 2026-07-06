@@ -79,6 +79,22 @@ struct HeadingView: View {
             .padding(.top, style.spacingAbove)
             .padding(.bottom, style.spacingBelow)
             .textSelection(.enabled)
+            // VoiceOver reads the document as a structured outline: each
+            // heading is announced as a heading at its real level, so
+            // rotor "Headings" navigation and level nesting work (PLAN §6).
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityHeading(Self.headingLevel(level))
+    }
+
+    private static func headingLevel(_ level: Int) -> AccessibilityHeadingLevel {
+        switch level {
+        case 1: return .h1
+        case 2: return .h2
+        case 3: return .h3
+        case 4: return .h4
+        case 5: return .h5
+        default: return .h6
+        }
     }
 }
 

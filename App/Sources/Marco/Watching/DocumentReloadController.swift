@@ -232,8 +232,17 @@ final class DocumentReloadController {
         }
 
         if followModeEnabled, let firstChangedID {
-            withAnimation(.easeInOut(duration: 0.35)) {
-                scrollPosition.scrollTo(id: firstChangedID)
+            // Follow mode auto-scrolls to the newest change. Honor Reduce
+            // Motion (no @Environment here — this is a controller, not a
+            // view — so read the AppKit accessibility flag directly).
+            if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { scrollPosition.scrollTo(id: firstChangedID) }
+            } else {
+                withAnimation(.easeInOut(duration: 0.35)) {
+                    scrollPosition.scrollTo(id: firstChangedID)
+                }
             }
         }
 
