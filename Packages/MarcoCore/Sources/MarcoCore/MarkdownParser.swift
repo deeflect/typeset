@@ -9,6 +9,7 @@ import Markdown
 public enum MarkdownParser {
 
     public static func parse(_ text: String) -> [Block] {
+        let text = normalizingLineEndings(text)
         var ordinal = 0
         var blocks: [Block] = []
 
@@ -19,7 +20,26 @@ public enum MarkdownParser {
         }
 
         blocks.append(contentsOf: parseBody(body, startOrdinal: ordinal, lineOffset: 0))
-        return blocks
+        return Block.assigningOccurrenceIndices(to: blocks)
+    }
+
+    /// Normalizes CRLF (`\r\n`) and bare CR (`\r`) line endings to LF
+    /// (`\n`), once, at every raw-text entry point (`parse`,
+    /// `reparseIncremental`, `parseProgressive`). Without this, a `\r`
+    /// left dangling after splitting on `\n` breaks frontmatter fence
+    /// detection (`"---\r" != "---"`) and blank-separator-line checks in
+    /// `IncrementalReparse`. Byte offsets/line numbers are computed AFTER
+    /// normalization, so they're internally consistent even though they
+    /// no longer match raw on-disk offsets for CRLF files.
+    static func normalizingLineEndings(_ text: String) -> String {
+        // NOTE: `text.contains("\r")` is NOT a valid fast-path check here —
+        // Swift's `Character`/grapheme-cluster model fuses "\r\n" into a
+        // single `Character`, so a plain `Character`-based `contains("\r")`
+        // check misses it entirely. Check unicode scalars instead, which
+        // see "\r" and "\n" as distinct code points regardless of
+        // grapheme clustering.
+        guard text.unicodeScalars.contains(where: { $0 == "\r" }) else { return text }
+        return text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
     }
 
     /// Parses a frontmatter-free slice of body text into blocks, continuing
@@ -59,6 +79,20 @@ public enum MarkdownParser {
 
     /// Returns `(frontmatterBlock, remainingBody)`. `frontmatterBlock` is
     /// `nil` if the document doesn't start with a `---` fence.
+    ///
+    /// Rule: a leading `---` line is only treated as a frontmatter opener
+    /// if (a) there is a later line that is exactly `---` (the closer),
+    /// AND (b) at least one line strictly between opener and closer looks
+    /// like a YAML key — matches `^[A-Za-z0-9_-]+\s*:` once trimmed. This
+    /// guards against a document that legitimately *starts* with a
+    /// thematic break (`---`) followed later by another unrelated `---`
+    /// (another thematic break, or a setext heading underline) — with no
+    /// `key:`-shaped line in between, it's treated as ordinary content
+    /// instead of swallowed as frontmatter. Known limitation (not
+    /// over-engineered further): a body that coincidentally contains a
+    /// `key:`-looking line of prose before a later unrelated `---` will
+    /// still be misdetected as frontmatter; disambiguating that requires
+    /// real YAML validation, which is out of scope here.
     static func splitFrontmatter(_ text: String) -> (String?, String) {
         guard text.hasPrefix("---") else { return (nil, text) }
 
@@ -66,15 +100,24 @@ public enum MarkdownParser {
         guard lines.first == "---" else { return (nil, text) }
 
         for index in lines.indices.dropFirst() {
-            if lines[index] == "---" {
-                let frontmatterLines = lines[0...index]
-                let frontmatter = frontmatterLines.joined(separator: "\n")
-                let remainingLines = lines[(index + 1)...]
-                let body = remainingLines.joined(separator: "\n")
-                return (frontmatter, body)
-            }
+            guard lines[index] == "---" else { continue }
+            guard index > 1, lines[1..<index].contains(where: looksLikeYAMLKeyLine) else { continue }
+
+            let frontmatterLines = lines[0...index]
+            let frontmatter = frontmatterLines.joined(separator: "\n")
+            let remainingLines = lines[(index + 1)...]
+            let body = remainingLines.joined(separator: "\n")
+            return (frontmatter, body)
         }
         return (nil, text)
+    }
+
+    private static let yamlKeyPattern = try! NSRegularExpression(pattern: #"^[A-Za-z0-9_-]+\s*:"#)
+
+    private static func looksLikeYAMLKeyLine(_ line: Substring) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let range = NSRange(trimmed.startIndex..., in: trimmed)
+        return yamlKeyPattern.firstMatch(in: trimmed, range: range) != nil
     }
 
     // MARK: - Block classification

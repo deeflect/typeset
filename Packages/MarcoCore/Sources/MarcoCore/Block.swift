@@ -19,16 +19,36 @@ public enum BlockKind: Equatable, Sendable {
 /// A single block-level unit of a parsed Markdown document.
 ///
 /// Identity is `contentHash` (SHA-256 of the block's raw text) plus
-/// `ordinal`, a 0-based counter that disambiguates otherwise-identical
-/// blocks (e.g. two blank `---` thematic breaks in a row) so each block
-/// still has a stable, unique `id` for diffing and SwiftUI `ForEach`.
+/// `occurrenceIndex`, a LOCAL counter scoped to blocks sharing that exact
+/// hash: the first block anywhere in the document with a given hash is
+/// occurrence 0, the second block anywhere in the document with that same
+/// hash is occurrence 1, and so on, counted in document order. Unlike the
+/// old scheme (a global position counter baked into every block's id),
+/// this means a unique block's `id` never changes just because unrelated
+/// blocks were inserted or deleted elsewhere in the document — only
+/// genuine duplicates (e.g. repeated `---` thematic breaks) are
+/// disambiguated, and only relative to their own duplicate siblings. See
+/// `Block.assigningOccurrenceIndices(to:)` for how this is computed.
 public struct Block: Identifiable, Equatable, Sendable {
     public let kind: BlockKind
     /// Raw Markdown source text for this block (used for hashing and,
     /// for now, as the plumbing-proof render payload).
     public let rawText: String
-    /// Disambiguates duplicate `contentHash` values within a document.
+    /// 0-based global position counter assigned during parsing. Retained
+    /// for internal ordering/splicing (`IncrementalReparse`,
+    /// `ProgressiveParser`'s ordinal continuity across chunks) — it is
+    /// NOT part of `id` anymore (see `occurrenceIndex`), since baking
+    /// global position into identity is exactly what made every
+    /// downstream block's `id` change on an unrelated edit.
     public let ordinal: Int
+    /// Local occurrence index among blocks sharing this exact
+    /// `contentHash`, in document order (0 for the first such block, 1
+    /// for the second, ...). This — not `ordinal` — is what disambiguates
+    /// duplicate-content blocks in `id`. Defaults to 0; callers that build
+    /// a full `[Block]` array should run it through
+    /// `Block.assigningOccurrenceIndices(to:)` before treating `id` as
+    /// final.
+    public let occurrenceIndex: Int
     /// 0-based line number (within the body text that was parsed — i.e.
     /// after frontmatter has been split off) where this block starts.
     /// `-1` for the synthesized frontmatter block, and for blocks created
@@ -58,27 +78,78 @@ public struct Block: Identifiable, Equatable, Sendable {
     /// SHA-256 hex digest of `rawText`, computed on demand from `digest`.
     public var contentHash: String { Block.hex(digest) }
 
-    public init(kind: BlockKind, rawText: String, ordinal: Int, startLine: Int = -1) {
+    public init(kind: BlockKind, rawText: String, ordinal: Int, startLine: Int = -1, occurrenceIndex: Int = 0) {
         self.kind = kind
         self.rawText = rawText
         self.digest = Block.sha256(rawText)
         self.ordinal = ordinal
         self.startLine = startLine
+        self.occurrenceIndex = occurrenceIndex
     }
 
     /// Internal fast path: skips re-hashing `rawText` when the caller
     /// already knows the digest (e.g. reusing an untouched block from a
     /// prior parse under a new ordinal during incremental reparse).
-    init(kind: BlockKind, rawText: String, digest: SIMD32<UInt8>, ordinal: Int, startLine: Int) {
+    /// `occurrenceIndex` defaults to 0 since callers that splice blocks
+    /// together must re-run `assigningOccurrenceIndices(to:)` over the
+    /// final array anyway before trusting `id`.
+    init(kind: BlockKind, rawText: String, digest: SIMD32<UInt8>, ordinal: Int, startLine: Int, occurrenceIndex: Int = 0) {
         self.kind = kind
         self.rawText = rawText
         self.digest = digest
         self.ordinal = ordinal
         self.startLine = startLine
+        self.occurrenceIndex = occurrenceIndex
     }
 
     /// Stable identity used for diffing and list rendering.
-    public var id: String { "\(contentHash)#\(ordinal)" }
+    public var id: String { "\(contentHash)#\(occurrenceIndex)" }
+
+    /// Returns `blocks` with `occurrenceIndex` assigned to reflect each
+    /// block's position among others sharing the same `contentHash`, in
+    /// document order (0 for the first occurrence of a given hash, 1 for
+    /// the second, ...). This must be run over the FULL, final block
+    /// array (or, for a streaming producer, threaded through the same
+    /// running per-hash counters in document order) before `id` is
+    /// trusted for diffing/`ForEach` identity. O(n) — one dictionary
+    /// lookup/increment per block.
+    static func assigningOccurrenceIndices(to blocks: [Block]) -> [Block] {
+        var counts: [DigestKey: Int] = [:]
+        counts.reserveCapacity(blocks.count)
+        return blocks.map { block in
+            let key = DigestKey(digest: block.digest)
+            let index = counts[key, default: 0]
+            counts[key] = index + 1
+            return Block(
+                kind: block.kind, rawText: block.rawText, digest: block.digest,
+                ordinal: block.ordinal, startLine: block.startLine, occurrenceIndex: index
+            )
+        }
+    }
+
+    /// Fast identity comparison equivalent to `id == other.id` but without
+    /// allocating/hex-encoding either side's `contentHash` string — used
+    /// by `BlockDiffer`'s hot inner loops, which compare many blocks'
+    /// identities but never need the string form itself.
+    func hasSameIdentity(as other: Block) -> Bool {
+        occurrenceIndex == other.occurrenceIndex && digest == other.digest
+    }
+
+    /// A `Hashable` wrapper around `digest` for use as a dictionary key.
+    /// The synthesized `Hashable` conformance SIMD types get from the
+    /// standard library combines all 32 lanes one at a time into the
+    /// hasher, which measurably dominates parse/diff time at block counts
+    /// in the tens of thousands (SHA-256 output is already uniformly
+    /// distributed, so hashing all 32 bytes buys nothing over a single
+    /// bulk combine). `Hasher.combine(bytes:)` hashes the same 32 bytes
+    /// in one call instead of 32.
+    struct DigestKey: Hashable {
+        let digest: SIMD32<UInt8>
+        static func == (a: DigestKey, b: DigestKey) -> Bool { a.digest == b.digest }
+        func hash(into hasher: inout Hasher) {
+            withUnsafeBytes(of: digest) { hasher.combine(bytes: $0) }
+        }
+    }
 
     static func sha256(_ text: String) -> SIMD32<UInt8> {
         var result = SIMD32<UInt8>()

@@ -31,6 +31,10 @@ extension MarkdownParser {
     ///   `parse(oldText)`. Passing mismatched inputs won't crash, but the
     ///   correctness guarantee above no longer holds.
     public static func reparseIncremental(oldText: String, newText: String, oldBlocks: [Block]) -> [Block] {
+        // Consistent with `parse(_:)`: normalize once at this entry point
+        // too, since callers may pass raw (not pre-normalized) text.
+        let oldText = normalizingLineEndings(oldText)
+        let newText = normalizingLineEndings(newText)
         if oldText == newText { return oldBlocks }
 
         let (oldFrontmatter, oldBody) = splitFrontmatter(oldText)
@@ -202,7 +206,14 @@ extension MarkdownParser {
                 )
             )
         }
-        return result
+
+        // A splice can insert or remove a duplicate-hash block anywhere in
+        // the document, which can shift how many same-hash blocks precede
+        // any later block of that same hash — so `occurrenceIndex` can't
+        // be trusted to carry over from the pre-splice blocks. Recompute
+        // it over the full result in one O(n) pass instead of trying to
+        // patch it incrementally.
+        return Block.assigningOccurrenceIndices(to: result)
     }
 
     /// Binary search: the last index whose `startLine` is `<= line`, or

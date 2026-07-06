@@ -28,12 +28,30 @@ extension MarkdownParser {
     public static func parseProgressive(_ text: String, firstChunkBytes: Int = 100_000) -> AsyncStream<[Block]> {
         AsyncStream { continuation in
             Task.detached(priority: .userInitiated) {
+                let text = normalizingLineEndings(text)
                 let (frontmatter, body) = splitFrontmatter(text)
                 var ordinal = 0
+                // Occurrence indices (see `Block.assigningOccurrenceIndices`)
+                // are threaded through as a running per-hash counter across
+                // chunks, in document order — equivalent to computing them
+                // over the whole concatenated result in one pass, but
+                // without needing the whole document parsed upfront.
+                var occurrenceCounts: [SIMD32<UInt8>: Int] = [:]
+                func withOccurrenceIndices(_ blocks: [Block]) -> [Block] {
+                    blocks.map { block in
+                        let index = occurrenceCounts[block.digest, default: 0]
+                        occurrenceCounts[block.digest] = index + 1
+                        return Block(
+                            kind: block.kind, rawText: block.rawText, digest: block.digest,
+                            ordinal: block.ordinal, startLine: block.startLine, occurrenceIndex: index
+                        )
+                    }
+                }
+
                 if let frontmatter {
-                    continuation.yield([
+                    continuation.yield(withOccurrenceIndices([
                         Block(kind: .frontmatter, rawText: frontmatter, ordinal: ordinal, startLine: -1)
-                    ])
+                    ]))
                     ordinal += 1
                 }
 
@@ -44,7 +62,7 @@ extension MarkdownParser {
                     let blocks = parseBody(slice, startOrdinal: ordinal, lineOffset: lineOffset)
                     ordinal += blocks.count
                     lineOffset += slice.lazy.filter { $0 == "\n" }.count
-                    continuation.yield(blocks)
+                    continuation.yield(withOccurrenceIndices(blocks))
                 }
                 continuation.finish()
             }

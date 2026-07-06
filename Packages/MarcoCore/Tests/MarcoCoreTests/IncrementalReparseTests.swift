@@ -103,6 +103,40 @@ struct IncrementalReparseTests {
         assertIncrementalMatchesFullReparse(oldText: old, newText: new)
     }
 
+    /// The core id-stability property the whole redesign rests on: a
+    /// block far from an insertion point keeps the EXACT same `id`
+    /// before and after, because `id` is now content-hash + LOCAL
+    /// same-hash occurrence index rather than content-hash + global
+    /// ordinal. `BlockDiffer`'s exact insert/delete counts depend on
+    /// this holding, not just on "the diff looks reasonable".
+    @Test func idsFarFromAnInsertionPointAreExactlyPreserved() {
+        let old = makeDocument(sectionCount: 100)
+        let oldBlocks = MarkdownParser.parse(old)
+
+        let sections = old.components(separatedBy: "\n\n## Section")
+        var new = sections[0]
+        for (i, section) in sections.dropFirst().enumerated() {
+            new += "\n\n## Section" + section
+            if i == 4 {
+                new += "\n\n## Section EXTRA\n\nInserted paragraph."
+            }
+        }
+
+        let newBlocksFull = MarkdownParser.parse(new)
+        let newBlocksIncremental = MarkdownParser.reparseIncremental(oldText: old, newText: new, oldBlocks: oldBlocks)
+
+        // Blocks belonging to sections well after the insertion point
+        // (say, section 50 onward) must keep exactly the same ids as
+        // before the insertion — not just "the same relative diff".
+        let farOldIDs = oldBlocks.filter { $0.startLine >= 0 && $0.rawText.contains("Section 5") }.map(\.id)
+        let farNewFullIDs = newBlocksFull.filter { $0.rawText.contains("Section 5") }.map(\.id)
+        let farNewIncrementalIDs = newBlocksIncremental.filter { $0.rawText.contains("Section 5") }.map(\.id)
+
+        #expect(!farOldIDs.isEmpty)
+        #expect(farNewFullIDs == farOldIDs)
+        #expect(farNewIncrementalIDs == farOldIDs)
+    }
+
     @Test func identicalTextReturnsSameBlocksWithoutReparsing() {
         let text = makeDocument(sectionCount: 5)
         let blocks = MarkdownParser.parse(text)
