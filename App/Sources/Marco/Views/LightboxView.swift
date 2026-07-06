@@ -31,14 +31,14 @@ struct LightboxView: View {
                         .onChanged { zoom = clamp($0.magnification) }
                         .onEnded { _ in if zoom < 1.02 { withAnimation(.easeOut(duration: 0.2)) { zoom = 1 } } }
                 )
+                // Double-tap toggles zoom; dismissal is the scrim tap, the
+                // close button, or Esc — so the image tap never fights the
+                // zoom gesture with a disambiguation delay.
                 .onTapGesture(count: 2) {
                     withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) {
                         zoom = zoom > 1.01 ? 1 : 2
                     }
                 }
-                // A single tap on the image (not the double-tap) also dismisses,
-                // matching Quick Look; the scrim tap covers the margins.
-                .onTapGesture { dismiss() }
                 .accessibilityLabel("Zoomed image. Press Escape to close.")
 
             VStack {
