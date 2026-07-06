@@ -70,7 +70,7 @@ struct Theme: Equatable {
     }
 
     var thematicBreak: Color {
-        isDark ? Color.white.opacity(0.14) : Color.black.opacity(0.12)
+        isDark ? Color.white.opacity(0.22) : Color.black.opacity(0.20)
     }
 
     var linkColor: Color { accent }

@@ -72,6 +72,7 @@ struct TableBlockView: View {
                     .font(isHeader ? theme.bodyFont.weight(.semibold) : theme.bodyFont)
                     .foregroundStyle(theme.textPrimary)
                     .multilineTextAlignment(textAlignment(alignment))
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(minWidth: fits ? nil : colWidth,
                            maxWidth: fits ? .infinity : nil,
                            alignment: frameAlignment(alignment))

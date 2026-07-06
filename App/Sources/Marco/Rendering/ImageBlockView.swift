@@ -32,14 +32,25 @@ struct ImageBlockView: View {
     let source: String
     @Environment(\.theme) private var theme
     @Environment(\.documentBaseURL) private var baseURL
+    @Environment(\.isSnapshot) private var isSnapshot
 
     @State private var image: NSImage?
     @State private var failed = false
 
+    /// In snapshots the async `.task` never completes, so resolve the image
+    /// synchronously (it's a one-shot render).
+    private var displayImage: NSImage? {
+        if let image { return image }
+        if isSnapshot, let url = resolvedURL() {
+            return ImageBlockView.downsampledImage(at: url, maxPixel: 1600)
+        }
+        return nil
+    }
+
     var body: some View {
         Group {
-            if let image {
-                Image(nsImage: image)
+            if let displayImage {
+                Image(nsImage: displayImage)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(maxWidth: .infinity)
@@ -48,7 +59,7 @@ struct ImageBlockView: View {
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .strokeBorder(theme.codeCardStroke, lineWidth: 1)
                     )
-            } else if failed {
+            } else if failed || isSnapshot {
                 placeholder
             } else {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)

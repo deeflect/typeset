@@ -14,6 +14,7 @@ struct BlockquoteView: View {
                     .font(theme.bodyFont)
                     .foregroundStyle(theme.quoteText)
                     .lineSpacing(theme.bodyLineSpacing)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.leading, leadingInset(paragraph.depth))
                     .overlay(alignment: .leading) { bars(depth: paragraph.depth) }

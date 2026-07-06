@@ -81,10 +81,9 @@ struct ThematicBreakView: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        Rectangle()
+        Capsule()
             .fill(theme.thematicBreak)
-            .frame(height: 1)
-            .frame(maxWidth: 120)
+            .frame(width: 220, height: 1.5)
             .frame(maxWidth: .infinity, alignment: .center)
             .padding(.vertical, theme.scaled(28))
     }

@@ -112,9 +112,12 @@ inside their own card instead of stretching the page.
 
 ## Everything else, handled
 
-Marco renders images with rounded corners and downsampled decode, resolves
-frontmatter into the tidy chip at the top of this page, and draws a quiet
-centered rule when a document changes subject:
+Marco renders images with rounded corners and downsampled decode:
+
+![A soft gradient, decoded off-main and downsampled to the column width](marco-sample.png)
+
+It resolves frontmatter into the tidy chip at the top of this page, and
+draws a quiet centered rule when a document changes subject:
 
 ---
 
