@@ -102,6 +102,7 @@ final class DocumentReloadController {
     /// watching for further changes. Call once per window/url.
     func start() {
         isAccessingSecurityScope = url.startAccessingSecurityScopedResource()
+        FolderAccessStore.shared.noteDocumentOpened(url)
         loadInitial()
         let watcher = FileWatcher(url: url)
         watcher.onReload = { [weak self] in
@@ -124,6 +125,7 @@ final class DocumentReloadController {
         }
         watcher = nil
         pulseClearTask?.cancel()
+        FolderAccessStore.shared.noteDocumentClosed(url)
         if isAccessingSecurityScope {
             url.stopAccessingSecurityScopedResource()
             isAccessingSecurityScope = false

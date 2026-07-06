@@ -117,8 +117,13 @@ struct DocumentWindow: View {
             }
             banners(controller)
             if let hint = model.accessHint {
-                AccessHintBanner(message: hint) { model.dismissAccessHint() }
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                AccessHintBanner(
+                    message: hint,
+                    actionTitle: model.accessHintAction?.title,
+                    onAction: model.accessHintAction == nil ? nil : { model.grantAccessFromHint() },
+                    onDismiss: { model.dismissAccessHint() }
+                )
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
         .padding(.top, 8)

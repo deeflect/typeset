@@ -5,6 +5,8 @@ import SwiftUI
 /// dismisses; also dismissable by hand.
 struct AccessHintBanner: View {
     let message: String
+    var actionTitle: String? = nil
+    var onAction: (() -> Void)? = nil
     let onDismiss: () -> Void
     @Environment(\.theme) private var theme
 
@@ -16,6 +18,10 @@ struct AccessHintBanner: View {
                 .font(.system(size: 13))
                 .lineLimit(2)
             Spacer()
+            if let actionTitle, let onAction {
+                Button(actionTitle, action: onAction)
+                    .buttonStyle(.borderedProminent)
+            }
             Button("Dismiss", action: onDismiss)
                 .buttonStyle(.bordered)
         }

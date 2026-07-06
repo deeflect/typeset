@@ -35,7 +35,15 @@ struct ImageBlockView: View {
     @Environment(\.isSnapshot) private var isSnapshot
 
     @State private var image: NSImage?
-    @State private var failed = false
+    @State private var failure: LoadFailure?
+
+    /// Distinguishes a plain "unavailable" placeholder from one where the
+    /// sandbox is the reason — the latter gets a quiet "Allow access"
+    /// affordance instead of a dead end.
+    private enum LoadFailure: Equatable {
+        case unavailable
+        case needsAccess(folder: URL)
+    }
 
     /// In snapshots the async `.task` never completes, so resolve the image
     /// synchronously (it's a one-shot render).
@@ -59,7 +67,7 @@ struct ImageBlockView: View {
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .strokeBorder(theme.codeCardStroke, lineWidth: 1)
                     )
-            } else if failed || isSnapshot {
+            } else if failure != nil || isSnapshot {
                 placeholder
             } else {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -69,15 +77,22 @@ struct ImageBlockView: View {
             }
         }
         .task(id: source) { await load() }
+        .onReceive(NotificationCenter.default.publisher(for: FolderAccessStore.accessGrantedNotification)) { _ in
+            // A folder was just granted (from this or any other broken
+            // image's affordance) — quietly re-attempt in place.
+            guard failure != nil else { return }
+            Task { await load() }
+        }
     }
 
+    @ViewBuilder
     private var placeholder: some View {
         HStack(spacing: theme.scaled(12)) {
-            Image(systemName: "photo")
+            Image(systemName: needsAccessFolder == nil ? "photo" : "lock.slash")
                 .font(.system(size: 22))
                 .foregroundStyle(theme.textTertiary)
             VStack(alignment: .leading, spacing: 2) {
-                Text(alt.isEmpty ? "Image unavailable" : alt)
+                Text(placeholderTitle)
                     .font(theme.bodyFont)
                     .foregroundStyle(theme.textSecondary)
                 Text(source)
@@ -87,6 +102,11 @@ struct ImageBlockView: View {
                     .truncationMode(.middle)
             }
             Spacer(minLength: 0)
+            if let folder = needsAccessFolder, !isSnapshot {
+                Button("Allow Access\u{2026}") { requestAccess(to: folder) }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
         }
         .padding(theme.scaled(16))
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -97,18 +117,41 @@ struct ImageBlockView: View {
         )
     }
 
+    private var needsAccessFolder: URL? {
+        if case .needsAccess(let folder) = failure { return folder }
+        return nil
+    }
+
+    private var placeholderTitle: String {
+        if needsAccessFolder != nil {
+            return alt.isEmpty ? "Image needs folder access" : alt
+        }
+        return alt.isEmpty ? "Image unavailable" : alt
+    }
+
+    private func requestAccess(to folder: URL) {
+        FolderAccessStore.shared.requestAccess(
+            defaultDirectory: folder,
+            message: "Allow \(Bundle.main.displayName) to open images in \u{201c}\(folder.lastPathComponent)\u{201d}.")
+        // The store posts `accessGrantedNotification` on success, which the
+        // `.onReceive` above turns into an immediate reload; nothing else
+        // to do here if the user cancels the panel.
+    }
+
     private func load() async {
         image = nil
-        failed = false
-        guard let url = resolvedURL() else { failed = true; return }
+        failure = nil
+        guard let url = resolvedURL() else { failure = .unavailable; return }
         let target = 1600
         let loaded = await Task.detached(priority: .utility) {
             ImageBlockView.downsampledImage(at: url, maxPixel: target)
         }.value
         if let loaded {
             image = loaded
+        } else if url.isFileURL, !FolderAccessStore.shared.access(to: url), FolderAccessStore.isAccessDenied(at: url) {
+            failure = .needsAccess(folder: url.deletingLastPathComponent())
         } else {
-            failed = true
+            failure = .unavailable
         }
     }
 

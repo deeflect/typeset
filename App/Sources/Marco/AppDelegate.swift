@@ -10,6 +10,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var onOpenURLs: (([URL]) -> Void)?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Resolves + starts accessing every persisted folder-access
+        // bookmark (see FolderAccessStore) and logs the active grants.
+        _ = FolderAccessStore.shared
         // Headless snapshot mode (visual verification without Screen
         // Recording): render the requested file to PNGs and exit.
         if SnapshotRunner.runIfRequested() {

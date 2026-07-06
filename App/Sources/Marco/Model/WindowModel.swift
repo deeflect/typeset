@@ -31,6 +31,10 @@ final class WindowModel {
     /// A quiet, non-modal hint shown when a relative link points at a file we
     /// can't read (sandbox scope not granted). Never a modal (PLAN §4).
     private(set) var accessHint: String?
+    /// Non-nil only while `accessHint` is showing *and* the failure looks
+    /// like a sandbox denial (as opposed to a genuinely missing file) — the
+    /// hint's "Allow access" action retries navigation to this URL.
+    private(set) var accessHintAction: (title: String, url: URL)?
     private var hintClearTask: Task<Void, Never>?
 
     /// Owned here (not in `DocumentWindow`) so the ⌘E menu item can drive the
@@ -137,7 +141,11 @@ final class WindowModel {
 
     /// Cheap sandbox-aware readability probe: try to open the file for reading
     /// (respects the sandbox, unlike a POSIX-permission check) and close it.
+    /// Consults `FolderAccessStore` first — an ancestor-folder grant keeps
+    /// its security scope open for the process lifetime, so once granted
+    /// this read just succeeds like any other file.
     private func canRead(_ url: URL) -> Bool {
+        if FolderAccessStore.shared.access(to: url) { return true }
         let didAccess = url.startAccessingSecurityScopedResource()
         defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
         guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
@@ -146,18 +154,42 @@ final class WindowModel {
     }
 
     private func presentAccessHint(for url: URL) {
-        accessHint = "Can't open \(url.lastPathComponent) — it's outside the folder you granted access to."
+        let folderName = url.deletingLastPathComponent().lastPathComponent
+        if FolderAccessStore.isAccessDenied(at: url) {
+            accessHint = "Can't open \(url.lastPathComponent) — allow access to \u{201c}\(folderName)\u{201d} to follow relative links there."
+            accessHintAction = (title: "Allow Access\u{2026}", url: url)
+        } else {
+            accessHint = "Can't open \(url.lastPathComponent) — it's outside the folder you granted access to."
+            accessHintAction = nil
+        }
         hintClearTask?.cancel()
         hintClearTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(6))
             guard !Task.isCancelled else { return }
             self?.accessHint = nil
+            self?.accessHintAction = nil
         }
     }
 
     func dismissAccessHint() {
         hintClearTask?.cancel()
         accessHint = nil
+        accessHintAction = nil
+    }
+
+    /// The access-hint's "Allow access" affordance: presents the folder
+    /// picker (never spontaneously — only from this explicit tap), stores
+    /// the bookmark, and — on success — immediately retries the original
+    /// navigation so the link resolves in place.
+    func grantAccessFromHint() {
+        guard let (_, url) = accessHintAction else { return }
+        let folder = url.deletingLastPathComponent()
+        let granted = FolderAccessStore.shared.requestAccess(
+            defaultDirectory: folder,
+            message: "Allow \(Bundle.main.displayName) to open files in \u{201c}\(folder.lastPathComponent)\u{201d}, so relative links between your Markdown files work.")
+        guard granted != nil else { return }
+        dismissAccessHint()
+        navigate(to: url)
     }
 
     // MARK: - Anchor navigation (#heading) within the current doc
