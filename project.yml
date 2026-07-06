@@ -70,13 +70,29 @@ targets:
         com.apple.security.app-sandbox: true
         com.apple.security.files.user-selected.read-write: true
         com.apple.security.print: true
-    scheme:
-      gatherCoverageData: false
+  MarcoTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: App/Tests/MarcoTests
+    dependencies:
+      - target: Marco
+    settings:
+      base:
+        SWIFT_EMIT_LOC_STRINGS: NO
+        GENERATE_INFOPLIST_FILE: YES
 
 schemes:
   Marco:
     build:
       targets:
         Marco: all
+        MarcoTests: [test]
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - name: MarcoTests
     run:
       config: Debug
