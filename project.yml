@@ -15,6 +15,9 @@ packages:
   swift-markdown:
     url: https://github.com/apple/swift-markdown.git
     from: 0.6.0
+  Highlightr:
+    url: https://github.com/raspu/Highlightr.git
+    from: 2.2.0
 
 targets:
   Marco:
@@ -23,8 +26,13 @@ targets:
     deploymentTarget: "26.0"
     sources:
       - path: App/Sources/Marco
+        excludes:
+          - "Resources/**"
+      - path: App/Sources/Marco/Resources
+        buildPhase: resources
     dependencies:
       - package: MarcoCore
+      - package: Highlightr
     settings:
       base:
         PRODUCT_NAME: $(APP_NAME)
