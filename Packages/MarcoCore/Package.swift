@@ -22,6 +22,14 @@ let package = Package(
         .testTarget(
             name: "MarcoCoreTests",
             dependencies: ["MarcoCore"]
+        ),
+        // Perf harness: `swift run -c release MarcoCoreBenchmark` prints
+        // Release-mode phase timings against the fixtures in
+        // Tests/Fixtures/generated (see Scripts/make-fixtures.sh). Not
+        // part of the library product — diagnostics only.
+        .executableTarget(
+            name: "MarcoCoreBenchmark",
+            dependencies: ["MarcoCore"]
         )
     ]
 )
