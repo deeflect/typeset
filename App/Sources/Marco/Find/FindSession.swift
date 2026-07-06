@@ -97,13 +97,29 @@ final class FindSession {
         currentIndex = 0
     }
 
+    /// Bumped each time a segment rebuild starts so a slower earlier build
+    /// (e.g. from a prior reload) can't clobber a newer one when it lands.
+    private var buildGeneration = 0
+
     /// Rebuilds the searchable segments — on open and on every live reload
-    /// while the bar is open — then re-runs the query. Keeps the current
-    /// index in range rather than resetting to the top, so a reload doesn't
-    /// yank the user back to match 1.
+    /// while the bar is open — off the main actor, then re-runs the query on
+    /// the main actor. Building is O(blocks) with a per-block inline parse
+    /// (~700 ms on a 1 MB / 24k-block file), so it must never block the main
+    /// thread: match tints appear instantly from the query alone; the count
+    /// and current-match navigation catch up when the build lands. The
+    /// `FindSegmentBuilder` is fully `nonisolated`, so this is safe off-main.
     func rebuildSegments(from blocks: [Block]) {
-        (keys, texts) = FindSegmentBuilder.build(from: blocks)
-        recomputeMatches()
+        buildGeneration += 1
+        let generation = buildGeneration
+        Task.detached(priority: .userInitiated) {
+            let result = FindSegmentBuilder.build(from: blocks)
+            await MainActor.run { [weak self] in
+                guard let self, self.buildGeneration == generation else { return }
+                self.keys = result.keys
+                self.texts = result.texts
+                self.recomputeMatches()
+            }
+        }
     }
 
     func setQuery(_ newValue: String) {

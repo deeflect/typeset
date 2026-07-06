@@ -30,6 +30,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if StyleBenchRunner.runIfRequested() {
             return
         }
+        // Headless ⌘F perf verification (segment build / search / highlight
+        // apply on a large file) without a visible window.
+        if FindBenchRunner.runIfRequested() {
+            NSApp.terminate(nil)
+            return
+        }
         // Suppress the automatic "Untitled" window macOS would otherwise
         // create for a document-based-looking app with no file yet — we
         // want the empty-state window instead, which WindowGroup(for:)
