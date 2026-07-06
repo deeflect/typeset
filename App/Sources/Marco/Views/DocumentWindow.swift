@@ -2,16 +2,11 @@ import AppKit
 import MarcoCore
 import SwiftUI
 
-/// The reading window: parses the opened file into `[Block]` and hands it to
-/// the block renderer. Owns the app-wide text-size scale and derives the
-/// `Theme` from the current appearance. Live reload (watching the file,
-/// reparsing, diffing, applying) is delegated to `DocumentReloadController`.
-///
-/// M3 adds source edit mode (⌘E): a crossfade between `DocumentRenderer`
-/// and `SourceEditorView`, position-preserving in both directions, plus
-/// save/conflict-banner/rich-text/PDF affordances — all state for those
-/// lives on `DocumentReloadController` so this view stays a thin renderer
-/// of that state machine.
+/// The reading window. Owns one `WindowModel` (history, outline sidebar, ⌘F
+/// session, scroll memory) which in turn holds the `DocumentReloadController`
+/// for whatever file is showing. The window itself is a thin renderer of that
+/// state: a `NavigationSplitView` with the native floating-glass outline
+/// column leading and the reading/editor surface trailing.
 struct DocumentWindow: View {
     let url: URL?
 
@@ -19,9 +14,7 @@ struct DocumentWindow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("textScale") private var textScale: Double = 1.0
 
-    @State private var controller: DocumentReloadController?
-    @State private var editorHandle = SourceEditorHandle()
-    @State private var pendingEditorScrollLine: Int?
+    @State private var model = WindowModel()
 
     private var theme: Theme {
         Theme(colorScheme: colorScheme, scale: CGFloat(textScale))
@@ -36,82 +29,116 @@ struct DocumentWindow: View {
             dim: NSColor(theme.textTertiary))
     }
 
+    private var sidebarVisibility: Binding<NavigationSplitViewVisibility> {
+        Binding(
+            get: { model.sidebarVisible ? .all : .detailOnly },
+            set: { model.sidebarVisible = ($0 != .detailOnly) })
+    }
+
     var body: some View {
         Group {
-            if let url {
-                if let controller {
-                    if let loadError = controller.loadError {
-                        errorView(loadError)
-                    } else if controller.blocks.isEmpty, !controller.isEditing {
-                        EmptyDocumentView()
-                    } else {
-                        ZStack {
-                            if controller.isEditing {
-                                SourceEditorView(
-                                    text: editedTextBinding(controller),
-                                    colors: syntaxColors,
-                                    handle: editorHandle
-                                )
-                                .onAppear {
-                                    if let line = pendingEditorScrollLine {
-                                        DispatchQueue.main.async { editorHandle.scrollToLine(line) }
-                                    }
-                                }
-                                .transition(.opacity)
-                            } else {
-                                DocumentRenderer(controller: controller, documentURL: url)
-                                    .transition(.opacity)
-                            }
-                        }
-                        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: controller.isEditing)
-                    }
-                } else {
-                    Color.clear
-                }
-            } else {
+            if url == nil {
                 EmptyStateView()
+            } else {
+                NavigationSplitView(columnVisibility: sidebarVisibility) {
+                    OutlineSidebar(model: model)
+                        .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 360)
+                } detail: {
+                    detailContent
+                }
             }
         }
         .environment(\.theme, theme)
         .environment(\.checkboxToggleHandler) { blockStartLine, lineOffset, checked in
-            controller?.toggleCheckbox(blockStartLine: blockStartLine, itemLineOffset: lineOffset, checked: checked)
+            model.controller?.toggleCheckbox(blockStartLine: blockStartLine, itemLineOffset: lineOffset, checked: checked)
         }
         .animation(.easeInOut(duration: 0.22), value: textScale)
-        .overlay(alignment: .top) { banners }
         .toolbar { toolbarContent }
-        .background { WindowAccessor { controller?.window = $0 } }
-        .background { hiddenShortcuts }
+        .background { WindowAccessor { model.window = $0 } }
+        .focusedValue(\.windowModel, model)
         .task(id: url) {
-            guard let url else { return }
-            let newController = DocumentReloadController(url: url)
-            controller = newController
-            newController.start()
+            model.readingTheme = theme
+            model.load(initial: url)
         }
-        .onDisappear {
-            controller?.stop()
-        }
-        .onChange(of: colorScheme) { _, _ in
-            InlineMarkdown.invalidate()
+        .onDisappear { model.stop() }
+        .onChange(of: colorScheme) { _, _ in InlineMarkdown.invalidate() }
+        .onChange(of: theme) { _, newTheme in model.readingTheme = newTheme }
+    }
+
+    // MARK: - Detail (reading / editor + overlays)
+
+    @ViewBuilder
+    private var detailContent: some View {
+        if let controller = model.controller {
+            contentArea(controller)
+                .overlay(alignment: .top) { topOverlays(controller) }
+        } else {
+            Color.clear
         }
     }
 
-    // MARK: - Banners (never modal — PLAN §4)
+    @ViewBuilder
+    private func contentArea(_ controller: DocumentReloadController) -> some View {
+        if let loadError = controller.loadError {
+            errorView(loadError)
+        } else if controller.blocks.isEmpty, !controller.isEditing {
+            EmptyDocumentView()
+        } else {
+            ZStack {
+                if controller.isEditing {
+                    SourceEditorView(
+                        text: editedTextBinding(controller),
+                        colors: syntaxColors,
+                        handle: model.editorHandle
+                    )
+                    .onAppear {
+                        if let line = model.pendingEditorScrollLine {
+                            DispatchQueue.main.async { model.editorHandle.scrollToLine(line) }
+                        }
+                    }
+                    .transition(.opacity)
+                } else {
+                    DocumentRenderer(controller: controller, model: model, documentURL: model.currentURL)
+                        .transition(.opacity)
+                }
+            }
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: controller.isEditing)
+        }
+    }
+
+    /// Find bar, conflict/save banners, and the quiet link-access hint —
+    /// stacked just under the toolbar, never modal (PLAN §4).
+    @ViewBuilder
+    private func topOverlays(_ controller: DocumentReloadController) -> some View {
+        VStack(spacing: 8) {
+            if model.find.isActive {
+                FindBar(model: model)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+            banners(controller)
+            if let hint = model.accessHint {
+                AccessHintBanner(message: hint) { model.dismissAccessHint() }
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .padding(.top, 8)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: model.find.isActive)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: model.accessHint)
+    }
 
     @ViewBuilder
-    private var banners: some View {
-        if let controller {
-            if controller.conflictState == .conflictPending {
-                ConflictBanner(
-                    onKeepMine: { controller.resolveConflictKeepMine() },
-                    onTakeTheirs: { controller.resolveConflictTakeTheirs() }
-                )
-            } else if let saveError = controller.saveError {
-                SaveErrorBanner(
-                    message: saveError,
-                    onSaveAs: { saveAs(controller) },
-                    onDismiss: { controller.saveError = nil }
-                )
-            }
+    private func banners(_ controller: DocumentReloadController) -> some View {
+        if controller.conflictState == .conflictPending {
+            ConflictBanner(
+                onKeepMine: { controller.resolveConflictKeepMine() },
+                onTakeTheirs: { controller.resolveConflictTakeTheirs() }
+            )
+        } else if let saveError = controller.saveError {
+            SaveErrorBanner(
+                message: saveError,
+                onSaveAs: { saveAs(controller) },
+                onDismiss: { controller.saveError = nil }
+            )
         }
     }
 
@@ -119,23 +146,41 @@ struct DocumentWindow: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
+        if model.history.count > 1 {
+            ToolbarItemGroup(placement: .navigation) {
+                Button { model.goBack() } label: { Image(systemName: "chevron.backward") }
+                    .disabled(!model.canGoBack)
+                    .help("Back (⌘[)")
+                Button { model.goForward() } label: { Image(systemName: "chevron.forward") }
+                    .disabled(!model.canGoForward)
+                    .help("Forward (⌘])")
+            }
+        }
         ToolbarItem(placement: .principal) {
             HStack(spacing: 6) {
-                Text(url?.lastPathComponent ?? Bundle.main.displayName)
+                Text(model.currentURL?.lastPathComponent ?? Bundle.main.displayName)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                if controller?.isFileRemoved == true {
+                if model.controller?.isFileRemoved == true {
                     Text("· File Removed")
                         .font(.system(size: 12))
                         .foregroundStyle(.tertiary)
                 }
             }
         }
-        if let controller {
+        if let controller = model.controller {
             ToolbarItem(placement: .automatic) {
-                Toggle(isOn: Binding(get: { controller.isEditing }, set: { _ in toggleEditMode(controller) })) {
+                Button {
+                    model.find.isActive ? model.closeFind() : model.openFind()
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                }
+                .help("Find (⌘F)")
+            }
+            ToolbarItem(placement: .automatic) {
+                Toggle(isOn: Binding(get: { controller.isEditing }, set: { _ in model.toggleEditMode() })) {
                     Image(systemName: controller.isEditing ? "doc.richtext" : "pencil")
                 }
                 .toggleStyle(.button)
@@ -154,22 +199,7 @@ struct DocumentWindow: View {
         }
     }
 
-    // MARK: - Mode transition (⌘E), position-preserving both directions
-
-    private func toggleEditMode(_ controller: DocumentReloadController) {
-        if controller.isEditing {
-            let caretLine = editorHandle.caretLine()
-            if let targetBlockID = controller.exitEditMode(caretLine: caretLine) {
-                var transaction = Transaction()
-                transaction.disablesAnimations = true
-                withTransaction(transaction) {
-                    controller.scrollPosition.scrollTo(id: targetBlockID)
-                }
-            }
-        } else {
-            pendingEditorScrollLine = controller.enterEditMode()
-        }
-    }
+    // MARK: - Helpers
 
     private func editedTextBinding(_ controller: DocumentReloadController) -> Binding<String> {
         Binding(
@@ -178,50 +208,15 @@ struct DocumentWindow: View {
         )
     }
 
-    // MARK: - Save As… fallback (PLAN §3: only shown when a save actually failed)
-
     private func saveAs(_ controller: DocumentReloadController) {
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = url?.lastPathComponent ?? "Untitled.md"
+        panel.nameFieldStringValue = model.currentURL?.lastPathComponent ?? "Untitled.md"
         guard panel.runModal() == .OK, let destination = panel.url else { return }
         do {
             try Data(controller.editedText.utf8).write(to: destination, options: .atomic)
             controller.saveError = nil
         } catch {
             controller.saveError = "Couldn't save to \(destination.lastPathComponent): \(error.localizedDescription)"
-        }
-    }
-
-    // MARK: - Per-window keyboard shortcuts (⌘S / ⌘⇧C / ⌘⇧E / ⌘P)
-    //
-    // Plain `Button`s with `.keyboardShortcut`, kept visually invisible,
-    // rather than app-level `Commands` + `@FocusedValue` plumbing — this
-    // app has exactly one kind of window, so each window's own hidden
-    // buttons already resolve to the right (key) window's controller for
-    // free, with far less ceremony.
-
-    @ViewBuilder
-    private var hiddenShortcuts: some View {
-        if let controller {
-            Group {
-                Button("Save") { controller.save() }
-                    .keyboardShortcut("s", modifiers: .command)
-                Button("Copy as Rich Text") {
-                    RichTextExporter.copyAsRichText(blocks: controller.blocks, theme: theme, plainMarkdown: controller.currentText)
-                }
-                .keyboardShortcut("c", modifiers: [.command, .shift])
-                Button("Export PDF") {
-                    PDFExporter.exportPDF(blocks: controller.blocks, suggestedName: (url?.deletingPathExtension().lastPathComponent ?? "Document") + ".pdf")
-                }
-                .keyboardShortcut("e", modifiers: [.command, .shift])
-                Button("Print") {
-                    PDFExporter.print(blocks: controller.blocks)
-                }
-                .keyboardShortcut("p", modifiers: .command)
-            }
-            .frame(width: 0, height: 0)
-            .opacity(0)
-            .accessibilityHidden(true)
         }
     }
 
@@ -241,8 +236,8 @@ struct DocumentWindow: View {
 }
 
 extension Bundle {
-    /// Never hardcode the app name in UI strings — read it from the
-    /// bundle so renaming stays a single xcconfig edit.
+    /// Never hardcode the app name in UI strings — read it from the bundle so
+    /// renaming stays a single xcconfig edit.
     var displayName: String {
         (object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
             ?? (object(forInfoDictionaryKey: "CFBundleName") as? String)

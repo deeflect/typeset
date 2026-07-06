@@ -54,7 +54,11 @@ struct SourceEditorView: NSViewRepresentable {
     let colors: MarkdownSyntaxStyler.Colors
     let handle: SourceEditorHandle
 
-    static let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+    // `nonisolated(unsafe)`: an immutable shared constant referenced from the
+    // nonisolated `NSTextStorageDelegate` callback (incremental styling). NSFont
+    // isn't Sendable, but this value is never mutated after init, so the
+    // cross-actor read is safe.
+    nonisolated(unsafe) static let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
 
     func makeNSView(context: Context) -> NSScrollView {
         // Building the TextKit stack by hand (rather than

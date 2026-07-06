@@ -24,7 +24,14 @@ import os
 /// - renamed to a different path: indistinguishable, from a path+directory
 ///   watch, from "deleted" — reported as removed (documented simplification;
 ///   following an arbitrary rename would need reading the old fd directly).
-final class FileWatcher {
+///
+/// `@unchecked Sendable`: every piece of mutable state is confined to
+/// `queue` (the sources, timers, and `expectedWrite` are only ever touched
+/// inside blocks dispatched onto it), so the type is safe to capture in the
+/// `@Sendable` `queue.async` closures even though the compiler can't prove
+/// that confinement. The two callback vars are set once at wiring time before
+/// any event can fire.
+final class FileWatcher: @unchecked Sendable {
     private let path: URL
     private let queue = DispatchQueue(label: "marco.filewatcher")
     private let debounceInterval: TimeInterval

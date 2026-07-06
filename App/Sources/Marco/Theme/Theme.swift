@@ -75,6 +75,28 @@ struct Theme: Equatable {
 
     var linkColor: Color { accent }
 
+    // MARK: - Find highlights (⌘F)
+
+    /// Tint under every ⌘F match. A soft, warm yellow — the platform's
+    /// find-highlight idiom, tuned for each appearance so it reads on both
+    /// paper-white and near-black without fighting the accent color used for
+    /// links and the change-pulse.
+    var findMatchHighlight: Color {
+        isDark ? Color(red: 0.62, green: 0.50, blue: 0.10).opacity(0.55)
+               : Color(red: 1.0, green: 0.86, blue: 0.30).opacity(0.75)
+    }
+    /// Stronger tint on the *current* match (⌘G steps between them), so the
+    /// active hit stands out from the rest of the field at a glance.
+    var findCurrentHighlight: Color {
+        isDark ? Color(red: 0.95, green: 0.66, blue: 0.12).opacity(0.85)
+               : Color(red: 1.0, green: 0.62, blue: 0.0).opacity(0.85)
+    }
+    /// Foreground forced on the current match so text stays legible against
+    /// the saturated current-highlight fill in dark mode.
+    var findCurrentText: Color {
+        isDark ? Color.black.opacity(0.92) : textPrimary
+    }
+
     // MARK: - Spacing scale
 
     func scaled(_ value: CGFloat) -> CGFloat { value * scale }

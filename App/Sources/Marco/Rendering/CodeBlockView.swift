@@ -8,8 +8,13 @@ import SwiftUI
 struct CodeBlockView: View {
     let raw: String
     let language: String?
+    /// `StructuredChild.id` when nested in a list/quote; `nil` at top level.
+    /// Part of its ⌘F highlight key.
+    var childID: Int? = nil
     @Environment(\.theme) private var theme
     @Environment(\.isSnapshot) private var isSnapshot
+    @Environment(\.findHighlight) private var findHighlight
+    @Environment(\.findBlockID) private var findBlockID
 
     @State private var highlighted: AttributedString?
     @State private var hovering = false
@@ -21,8 +26,10 @@ struct CodeBlockView: View {
     var body: some View {
         let initial = highlighted
             ?? CodeHighlighter.shared.cached(code: code, language: language, isDark: theme.colorScheme == .dark)
-        let displayed: AttributedString = initial ?? AttributedString(code)
+        let base: AttributedString = initial ?? AttributedString(code)
         let isHighlighted = initial != nil
+        let displayed = applyingFindHighlight(
+            base, context: findHighlight, blockID: findBlockID, childID: childID, theme: theme)
 
         codeText(displayed, isHighlighted: isHighlighted)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -115,7 +122,9 @@ struct CodeBlockView: View {
     }
 
     /// Strips fence lines (``` / ~~~) or dedents an indented code block.
-    static func extractCode(_ raw: String) -> String {
+    /// `nonisolated`: a pure string transform (used by the find-segment
+    /// builder and snapshot pre-warm off the main actor as well as here).
+    nonisolated static func extractCode(_ raw: String) -> String {
         var lines = raw.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         guard let first = lines.first else { return raw }
         let trimmedFirst = first.trimmingCharacters(in: .whitespaces)

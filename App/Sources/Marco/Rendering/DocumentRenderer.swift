@@ -1,12 +1,6 @@
+import AppKit
 import MarcoCore
 import SwiftUI
-
-extension Notification.Name {
-    /// Posted when a relative Markdown link is clicked. M1 stub — the
-    /// in-window navigation handler (back/forward) lands in a later
-    /// milestone.
-    static let marcoNavigateToMarkdown = Notification.Name("marcoNavigateToMarkdown")
-}
 
 /// The reading surface: a `LazyVStack` of per-block views inside a
 /// `ScrollView`, keyed by `block.id` so virtualization holds on large
@@ -15,6 +9,7 @@ extension Notification.Name {
 /// only ever sits on chrome.
 struct DocumentRenderer: View {
     @Bindable var controller: DocumentReloadController
+    let model: WindowModel
     let documentURL: URL?
     @Environment(\.theme) private var theme
 
@@ -37,28 +32,48 @@ struct DocumentRenderer: View {
         .scrollPosition($controller.scrollPosition)
         .background(theme.background)
         .environment(\.documentBaseURL, documentURL)
+        // Zero cost when find is closed: `highlightContext` is nil, so block
+        // views short-circuit all find work.
+        .environment(\.findHighlight, model.find.highlightContext)
         .environment(\.openURL, OpenURLAction { url in handle(link: url) })
     }
 
+    /// Relative `.md` links navigate in-window (with history); `#anchor` links
+    /// scroll to the matching heading; other local files reveal in Finder;
+    /// http(s) and everything else fall through to the system.
     private func handle(link url: URL) -> OpenURLAction.Result {
+        // Pure in-document anchor (`#heading`): no path, just a fragment.
+        if (url.scheme == nil), url.path.isEmpty, let fragment = url.fragment {
+            model.scrollToAnchor(fragment)
+            return .handled
+        }
+
         let isLocal = url.scheme == nil || url.scheme == "file"
-        let isMarkdown = ["md", "markdown", "mdown"].contains(url.pathExtension.lowercased())
-        if isLocal && isMarkdown {
-            // Stub: real in-window navigation (with back/forward) is a
-            // later milestone. Resolve against the document directory so
-            // the eventual handler receives an absolute URL.
-            let resolved: URL
-            if url.scheme == "file" {
-                resolved = url
-            } else if let base = documentURL {
-                resolved = base.deletingLastPathComponent().appendingPathComponent(url.relativePath).standardizedFileURL
-            } else {
-                resolved = url
-            }
-            NotificationCenter.default.post(name: .marcoNavigateToMarkdown, object: resolved)
+        guard isLocal else { return .systemAction }
+
+        let resolved = resolve(url)
+        let ext = resolved.pathExtension.lowercased()
+        if ["md", "markdown", "mdown"].contains(ext) {
+            model.navigate(to: resolved)
+            return .handled
+        }
+        // Non-Markdown local file (e.g. a linked .txt/.pdf/.png): reveal it in
+        // Finder rather than replacing the reading view. Minimal, non-modal.
+        if FileManager.default.fileExists(atPath: resolved.path) {
+            NSWorkspace.shared.activateFileViewerSelecting([resolved])
             return .handled
         }
         return .systemAction
+    }
+
+    private func resolve(_ url: URL) -> URL {
+        if url.scheme == "file" { return url.standardizedFileURL }
+        if let base = documentURL {
+            return base.deletingLastPathComponent()
+                .appendingPathComponent(url.relativePath)
+                .standardizedFileURL
+        }
+        return url.standardizedFileURL
     }
 }
 

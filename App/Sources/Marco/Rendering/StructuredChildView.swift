@@ -22,11 +22,11 @@ struct StructuredChildView: View {
     var body: some View {
         switch child.kind {
         case .paragraph(let text):
-            ParagraphView(raw: text, textColor: textColor)
+            ParagraphView(raw: text, textColor: textColor, childID: child.id)
         case .heading(let level, let text):
-            HeadingView(level: level, text: text)
+            HeadingView(level: level, text: text, childID: child.id)
         case .codeBlock(let language, let raw):
-            CodeBlockView(raw: raw, language: language)
+            CodeBlockView(raw: raw, language: language, childID: child.id)
         case .list(let model):
             ListView(model: model, depth: listDepth + 1)
         case .table(let model):

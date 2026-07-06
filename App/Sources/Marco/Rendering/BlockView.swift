@@ -8,6 +8,13 @@ struct BlockView: View {
     let block: Block
 
     var body: some View {
+        // Publish this block's id so leaf text views (including ones nested in
+        // list items / blockquotes) can form their ⌘F highlight key.
+        content.environment(\.findBlockID, block.id)
+    }
+
+    @ViewBuilder
+    private var content: some View {
         switch block.kind {
         case .frontmatter:
             FrontmatterView(raw: block.rawText)
@@ -50,11 +57,19 @@ struct BlockView: View {
 struct HeadingView: View {
     let level: Int
     let text: String
+    /// `StructuredChild.id` when this heading is nested inside a list/quote;
+    /// `nil` for a top-level heading. Part of its ⌘F highlight key.
+    var childID: Int? = nil
     @Environment(\.theme) private var theme
+    @Environment(\.findHighlight) private var findHighlight
+    @Environment(\.findBlockID) private var findBlockID
 
     var body: some View {
         let style = theme.heading(level: level)
-        Text(InlineMarkdown.attributed(text, theme: theme))
+        let attributed = applyingFindHighlight(
+            InlineMarkdown.attributed(text, theme: theme),
+            context: findHighlight, blockID: findBlockID, childID: childID, theme: theme)
+        Text(attributed)
             .font(style.font)
             .foregroundStyle(style.color)
             .tracking(style.tracking)
@@ -75,14 +90,22 @@ struct ParagraphView: View {
     /// blockquote prose) when this paragraph is rendered nested inside a
     /// list item or blockquote. `nil` keeps the default `textPrimary`.
     var textColor: Color? = nil
+    /// `StructuredChild.id` when this paragraph is nested inside a list/quote;
+    /// `nil` for a top-level paragraph. Part of its ⌘F highlight key.
+    var childID: Int? = nil
     @Environment(\.theme) private var theme
+    @Environment(\.findHighlight) private var findHighlight
+    @Environment(\.findBlockID) private var findBlockID
 
     var body: some View {
         if let image = InlineImage.soleImage(in: raw) {
             ImageBlockView(alt: image.alt, source: image.source)
                 .padding(.vertical, theme.scaled(8))
         } else {
-            Text(InlineMarkdown.attributed(raw, theme: theme))
+            let attributed = applyingFindHighlight(
+                InlineMarkdown.attributed(raw, theme: theme),
+                context: findHighlight, blockID: findBlockID, childID: childID, theme: theme)
+            Text(attributed)
                 .font(theme.bodyFont)
                 .foregroundStyle(textColor ?? theme.textPrimary)
                 .lineSpacing(theme.bodyLineSpacing)
