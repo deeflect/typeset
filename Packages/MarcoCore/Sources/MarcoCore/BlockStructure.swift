@@ -38,6 +38,15 @@ public struct ListModel: Equatable, Sendable {
         public let id: Int
         public var checkbox: TaskState?
         public var children: [StructuredChild]
+        /// 0-based line offset, relative to the *top-level block's*
+        /// `rawText` (not this nested list's own text — nested lists are
+        /// walked from the same parsed `Document` as their ancestor, never
+        /// re-parsed, so ranges stay relative to the original block), where
+        /// this item's own marker line (`- [ ] ...`) begins. `nil` when
+        /// `checkbox` is `nil`, or when swift-markdown didn't report a
+        /// range for this item. Combined with the owning `Block.startLine`
+        /// by `CheckboxWriteBack.flip` to locate the exact line to edit.
+        public var checkboxLineOffset: Int?
     }
 }
 
@@ -217,11 +226,14 @@ public enum BlockStructure {
         }
 
         let listItems = markup.children.compactMap { $0 as? ListItem }
-        let items = listItems.map { item in
-            ListModel.Item(
+        let items = listItems.map { item -> ListModel.Item in
+            let checkbox = item.checkbox.map { $0 == .checked ? TaskState.checked : .unchecked }
+            let lineOffset = checkbox != nil ? item.range.map { $0.lowerBound.line - 1 } : nil
+            return ListModel.Item(
                 id: idGen.nextID(),
-                checkbox: item.checkbox.map { $0 == .checked ? .checked : .unchecked },
-                children: childBlocks(of: item, idGen: idGen))
+                checkbox: checkbox,
+                children: childBlocks(of: item, idGen: idGen),
+                checkboxLineOffset: lineOffset)
         }
         return ListModel(isOrdered: isOrdered, start: start, isLoose: isLoose(listItems), items: items)
     }
