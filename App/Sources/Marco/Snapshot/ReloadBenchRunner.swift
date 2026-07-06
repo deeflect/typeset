@@ -2,6 +2,9 @@ import AppKit
 import Foundation
 import MarcoCore
 
+// Debug-only: this diagnostic entry point never ships in Release (PLAN §8).
+#if DEBUG
+
 /// Headless live-reload verification path, mirroring `SnapshotRunner`'s
 /// `MARCO_SNAPSHOT` pattern: drives the real `DocumentReloadController` +
 /// `FileWatcher` pipeline against a real file on disk, entirely in-process
@@ -65,3 +68,4 @@ enum ReloadBenchRunner {
         return true
     }
 }
+#endif

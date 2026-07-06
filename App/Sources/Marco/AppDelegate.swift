@@ -14,6 +14,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Resolves + starts accessing every persisted folder-access
         // bookmark (see FolderAccessStore) and logs the active grants.
         _ = FolderAccessStore.shared
+        // Headless bench/snapshot entry points (env-var triggered) never
+        // ship in Release: the runner types themselves are `#if DEBUG`-gated
+        // (PLAN §8), so a Release binary has no code path that reads
+        // MARCO_SNAPSHOT/MARCO_*_BENCH — setting them is a guaranteed no-op.
+        #if DEBUG
         // Headless snapshot mode (visual verification without Screen
         // Recording): render the requested file to PNGs and exit.
         if SnapshotRunner.runIfRequested() {
@@ -40,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.terminate(nil)
             return
         }
+        #endif
         // Suppress the automatic "Untitled" window macOS would otherwise
         // create for a document-based-looking app with no file yet — we
         // want the empty-state window instead, which WindowGroup(for:)

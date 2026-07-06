@@ -3,6 +3,9 @@ import Foundation
 import MarcoCore
 import MarcoRendering
 
+// Debug-only: this diagnostic entry point never ships in Release (PLAN §8).
+#if DEBUG
+
 /// Headless ⌘F perf verification, mirroring `SnapshotRunner`'s pattern.
 /// Measures the three costs that gate find responsiveness on a large file:
 /// building the searchable segments (paid once when the bar opens / on each
@@ -74,3 +77,4 @@ enum FindBenchRunner {
         Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000
     }
 }
+#endif

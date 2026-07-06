@@ -3,6 +3,9 @@ import CryptoKit
 import Foundation
 import MarcoCore
 
+// Debug-only: this diagnostic entry point never ships in Release (PLAN §8).
+#if DEBUG
+
 /// Headless M3 verification path, mirroring `ReloadBenchRunner`'s
 /// `MARCO_RELOAD_BENCH` pattern: drives the real `DocumentReloadController`
 /// M3 surface (checkbox write-back, save, conflict banner) against a real
@@ -118,3 +121,4 @@ enum EditBenchRunner {
         return nil
     }
 }
+#endif

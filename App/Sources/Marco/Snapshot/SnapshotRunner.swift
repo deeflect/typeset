@@ -3,6 +3,9 @@ import MarcoCore
 import SwiftUI
 import MarcoRendering
 
+// Debug-only: this diagnostic entry point never ships in Release (PLAN §8).
+#if DEBUG
+
 /// Headless snapshot path: renders a Markdown file to PNGs (light + dark)
 /// with `ImageRenderer`, entirely in-process, so the reading view can be
 /// verified visually without Screen Recording permission. Triggered by the
@@ -223,3 +226,4 @@ private struct SnapshotFindScene: View {
         }
     }
 }
+#endif

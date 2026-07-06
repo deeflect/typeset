@@ -1,6 +1,9 @@
 import AppKit
 import Foundation
 
+// Debug-only: this diagnostic entry point never ships in Release (PLAN §8).
+#if DEBUG
+
 /// Headless timing check for `MarkdownSyntaxStyler` (M3 source editor
 /// styling), mirroring the other `MARCO_*_BENCH` headless paths: loads a
 /// fixture into a real `NSTextStorage` and times a whole-document style
@@ -54,3 +57,4 @@ enum StyleBenchRunner {
         String(format: "%.3f", Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000)
     }
 }
+#endif
