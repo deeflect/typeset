@@ -96,3 +96,16 @@ if let text = fixture("large-10mb.md") {
     print(String(format: "  time to all chunks:  %.4fs", totalElapsed))
     print("  chunks: \(chunkCount), total blocks: \(totalBlocks)")
 }
+
+// Incremental reparse: one paragraph edit in the 1 MB fixture (budget: < 50 ms).
+if let text = fixture("large-1mb.md") {
+    print("\n--- large-1mb.md incremental reparse (one paragraph edit) ---")
+    let oldBlocks = MarkdownParser.parse(text)
+    let newText = text.replacingOccurrences(of: "Paragraph 500 with", with: "Paragraph 500 EDITED with")
+    let start = CFAbsoluteTimeGetCurrent()
+    let newBlocks = MarkdownParser.reparseIncremental(oldText: text, newText: newText, oldBlocks: oldBlocks)
+    let elapsed = CFAbsoluteTimeGetCurrent() - start
+    print(String(format: "  incremental reparse: %.4fs (budget < 0.05s)", elapsed))
+    print("  blocks: \(newBlocks.count) (was \(oldBlocks.count))")
+}
+

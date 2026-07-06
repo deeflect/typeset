@@ -83,10 +83,15 @@ extension MarkdownParser {
             let isBlank = trimmed.allSatisfy { $0 == "\n" }
 
             if let marker = trimmed.first, marker == "`" || marker == "~" {
-                let runLength = trimmed.prefix { $0 == marker }.count
+                let run = trimmed.prefix { $0 == marker }
+                let runLength = run.count
                 if runLength >= 3 {
+                    // A closing fence line must be *only* the run (plus
+                    // trailing whitespace) — "``` foo" after an open
+                    // fence is still code content, not a closer.
+                    let isCloserShape = trimmed[run.endIndex...].allSatisfy { $0 == " " || $0 == "\t" || $0 == "\n" }
                     if let openChar = fenceChar {
-                        if openChar == marker && runLength >= fenceLength {
+                        if openChar == marker && runLength >= fenceLength && isCloserShape {
                             fenceChar = nil
                             fenceLength = 0
                         }
