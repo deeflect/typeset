@@ -17,3 +17,7 @@ Tests/Fixtures/generated/
 
 # macOS
 .DS_Store
+
+# Local build output for snapshot/verification (see SnapshotRunner)
+.build-dd/
+.build-snap/

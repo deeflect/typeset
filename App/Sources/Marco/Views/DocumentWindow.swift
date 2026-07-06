@@ -1,65 +1,66 @@
 import MarcoCore
 import SwiftUI
 
-/// v0 window shell: proves the open-file plumbing and the parser, not
-/// the real renderer (that's M1). Shows the raw text plus a parsed
-/// block count so we can see `MarkdownParser` running end to end.
+/// The reading window: parses the opened file into `[Block]` and hands it to
+/// the block renderer. Owns the app-wide text-size scale and derives the
+/// `Theme` from the current appearance.
 struct DocumentWindow: View {
     let url: URL?
 
-    @State private var text: String = ""
+    @Environment(\.colorScheme) private var colorScheme
+    @AppStorage("textScale") private var textScale: Double = 1.0
+
     @State private var blocks: [Block] = []
     @State private var loadError: String?
+
+    private var theme: Theme {
+        Theme(colorScheme: colorScheme, scale: CGFloat(textScale))
+    }
 
     var body: some View {
         Group {
             if let url {
-                content(for: url)
+                if let loadError {
+                    errorView(loadError)
+                } else {
+                    DocumentRenderer(blocks: blocks, documentURL: url)
+                }
             } else {
                 EmptyStateView()
             }
         }
+        .environment(\.theme, theme)
+        .animation(.easeInOut(duration: 0.22), value: textScale)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Text(url?.lastPathComponent ?? Bundle.main.displayName)
-                    .font(.headline)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
         }
         .task(id: url) {
             guard let url else { return }
             load(from: url)
         }
+        .onChange(of: colorScheme) { _, _ in
+            InlineMarkdown.invalidate()
+        }
     }
 
-    @ViewBuilder
-    private func content(for url: URL) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if let loadError {
-                Text(loadError)
-                    .foregroundStyle(.red)
-                    .padding()
-            }
-
-            HStack {
-                Label("\(blocks.count) blocks parsed", systemImage: "square.stack.3d.up")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-            .padding(.horizontal)
-            .padding(.vertical, 8)
-            .glassEffect(in: RoundedRectangle(cornerRadius: 12))
-
-            Divider()
-
-            ScrollView {
-                Text(text)
-                    .font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding()
-            }
+    private func errorView(_ message: String) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 32))
+                .foregroundStyle(.secondary)
+            Text(message)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
         }
+        .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(theme.background)
     }
 
     private func load(from url: URL) {
@@ -67,7 +68,6 @@ struct DocumentWindow: View {
             let didAccess = url.startAccessingSecurityScopedResource()
             defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
             let loaded = try String(contentsOf: url, encoding: .utf8)
-            text = loaded
             blocks = MarkdownParser.parse(loaded)
             loadError = nil
         } catch {

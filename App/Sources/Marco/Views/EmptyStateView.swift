@@ -24,10 +24,18 @@ struct EmptyStateView: View {
             Text("Drop a Markdown file here, or")
                 .foregroundStyle(.secondary)
 
-            Button("Open…") {
-                appDelegate?.openPanel()
+            HStack(spacing: 12) {
+                Button("Open…") {
+                    appDelegate?.openPanel()
+                }
+                .keyboardShortcut(.defaultAction)
+
+                if let welcome = Bundle.main.url(forResource: "Welcome", withExtension: "md") {
+                    Button("Read the Guide") {
+                        openWindow(value: Optional(welcome))
+                    }
+                }
             }
-            .keyboardShortcut(.defaultAction)
         }
         .padding(40)
         .glassEffect(in: RoundedRectangle(cornerRadius: 20))

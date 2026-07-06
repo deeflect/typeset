@@ -10,6 +10,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var onOpenURLs: (([URL]) -> Void)?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Headless snapshot mode (visual verification without Screen
+        // Recording): render the requested file to PNGs and exit.
+        if SnapshotRunner.runIfRequested() {
+            NSApp.terminate(nil)
+            return
+        }
         // Suppress the automatic "Untitled" window macOS would otherwise
         // create for a document-based-looking app with no file yet — we
         // want the empty-state window instead, which WindowGroup(for:)
