@@ -215,11 +215,28 @@ public extension Theme {
 public extension EnvironmentValues {
     @Entry var theme: Theme = Theme(colorScheme: .light, scale: 1)
 
-    /// The `marco-copy://` URL of the inline-code chip that was just clicked,
-    /// injected by the reading view for the brief in-place "copied" flash
-    /// (see `applyingCopiedFlash`). `nil` (the default, and always in Quick
-    /// Look) means no chip is flashing and leaf views do zero flash work.
-    @Entry var copiedCodeFlashURL: URL? = nil
+    /// The reading view's click-to-copy feedback, injected once as a stable
+    /// object so a copy tap re-renders only the flashing chip (and the HUD) —
+    /// never the reading `body`, which would re-assert the scroll position on
+    /// the whole column. `nil` (the default, and always in Quick Look) means
+    /// no feedback surface is present and leaf views do zero flash work.
+    @Entry var inlineCopyFeedback: InlineCopyFeedback? = nil
+}
+
+/// Transient state for the inline-code click-to-copy affordance, owned by the
+/// reading view and shared with leaf blocks via `\.inlineCopyFeedback`. It's a
+/// reference type injected once (stable identity) so mutating `flashURL`/`pulse`
+/// invalidates only the views that *read* those properties — the flashing chip
+/// and the "Copied" HUD — and leaves the enclosing `ScrollView`/`LazyVStack`
+/// (and its bound scroll position) untouched. Always `nil` in Quick Look.
+@MainActor @Observable public final class InlineCopyFeedback {
+    public init() {}
+    /// The `marco-copy://` link of the chip currently flashing, or `nil`.
+    /// Read by leaf text views to tint exactly the run that was clicked.
+    public var flashURL: URL?
+    /// Bumped on every copy so the HUD re-shows even when the same chip is
+    /// copied twice in a row (`flashURL` alone wouldn't change).
+    public var pulse = 0
 }
 
 /// Applies the in-place "copied" flash onto a block's rendered

@@ -67,7 +67,7 @@ struct HeadingView: View {
     @Environment(\.theme) private var theme
     @Environment(\.findHighlight) private var findHighlight
     @Environment(\.findBlockID) private var findBlockID
-    @Environment(\.copiedCodeFlashURL) private var copiedCodeFlashURL
+    @Environment(\.inlineCopyFeedback) private var copyFeedback
 
     var body: some View {
         let style = theme.heading(level: level)
@@ -82,7 +82,7 @@ struct HeadingView: View {
             applyingFindHighlight(
                 InlineMarkdown.attributed(text, theme: theme),
                 context: findHighlight, blockID: findBlockID, childID: childID, theme: theme),
-            flashURL: copiedCodeFlashURL, theme: theme)
+            flashURL: copyFeedback?.flashURL, theme: theme)
         Text(attributed)
             .font(style.font)
             .foregroundStyle(style.color)
@@ -126,7 +126,7 @@ struct ParagraphView: View {
     @Environment(\.theme) private var theme
     @Environment(\.findHighlight) private var findHighlight
     @Environment(\.findBlockID) private var findBlockID
-    @Environment(\.copiedCodeFlashURL) private var copiedCodeFlashURL
+    @Environment(\.inlineCopyFeedback) private var copyFeedback
 
     var body: some View {
         if let image = InlineImage.soleImage(in: raw) {
@@ -137,7 +137,7 @@ struct ParagraphView: View {
                 applyingFindHighlight(
                     InlineMarkdown.attributed(raw, theme: theme),
                     context: findHighlight, blockID: findBlockID, childID: childID, theme: theme),
-                flashURL: copiedCodeFlashURL, theme: theme)
+                flashURL: copyFeedback?.flashURL, theme: theme)
             Text(attributed)
                 .font(theme.bodyFont)
                 .foregroundStyle(textColor ?? theme.textPrimary)

@@ -91,6 +91,10 @@ struct OutlineSidebar: View {
             try? await Task.sleep(for: .milliseconds(70))
             guard !Task.isCancelled else { return }
             guard Date() >= suppressTrackingUntil else { return }
+            // Skip the O(n) section scan while the window is being dragged —
+            // the top block barely moves, and the highlight re-settles on the
+            // next real scroll.
+            guard !model.isLiveResizing else { return }
             currentID = nearestHeading(topBlockID: top)
         }
     }

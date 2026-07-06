@@ -14,15 +14,15 @@ struct DocumentRenderer: View {
     let documentURL: URL?
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    /// Bumped on every inline-code copy to trigger the isolated HUD. Kept
-    /// separate from `copiedFlashURL` so the HUD's fade animation lives in its
-    /// own subview and never wraps the block `LazyVStack` in an animation
-    /// transaction (which reflowed chips on click — see `CopyHUD`).
-    @State private var copyToken = 0
-    /// The chip currently showing its in-place "copied" flash. Threaded to the
-    /// blocks via `copiedCodeFlashURL`; set/cleared without `withAnimation`.
-    @State private var copiedFlashURL: URL?
-    @State private var flashResetTask: Task<Void, Never>?
+    /// Click-to-copy feedback (the in-place chip flash + the HUD pulse), held
+    /// as a stable injected-once object rather than view `@State`. Mutating it
+    /// re-renders only the flashing chip and the HUD — never this `body`, so a
+    /// copy tap never re-asserts `\.scrollPosition` on the whole reading
+    /// column (which read as the column nudging under the tap).
+    @State private var copyFeedback = InlineCopyFeedback()
+    /// Headings currently showing the brief arrival pulse after an outline jump
+    /// (an accent whisper, reusing the live-reload pulse). Cleared on a timer.
+    @State private var arrivalPulseIDs: Set<String> = []
 
     var body: some View {
         ScrollView {
@@ -30,7 +30,9 @@ struct DocumentRenderer: View {
                 ForEach(controller.blocks) { block in
                     BlockView(block: block)
                         .id(block.id)
-                        .modifier(ChangePulseModifier(isPulsing: controller.pulsedBlockIDs.contains(block.id)))
+                        .modifier(ChangePulseModifier(
+                            isPulsing: controller.pulsedBlockIDs.contains(block.id)
+                                || arrivalPulseIDs.contains(block.id)))
                 }
             }
             .scrollTargetLayout()
@@ -47,17 +49,35 @@ struct DocumentRenderer: View {
             .pointerStyle(.horizontalText)
         }
         .scrollPosition($controller.scrollPosition)
+        // The outline just jumped to a heading: pulse it so the instant landing
+        // reads as an arrival rather than a teleport.
+        .onChange(of: model.outlineArrival) { _, arrival in
+            guard let arrival else { return }
+            pulseArrival(arrival.id)
+        }
         .background(theme.background)
-        .overlay(alignment: .top) { CopyHUD(token: copyToken) }
+        .overlay(alignment: .top) { CopyHUD() }
         .environment(\.documentBaseURL, documentURL)
         // Zero cost when find is closed: `highlightContext` is nil, so block
         // views short-circuit all find work.
         .environment(\.findHighlight, model.find.highlightContext)
-        // The one chip currently flashing "copied", if any. `nil` ⇒ blocks do
-        // no flash work. Set without `withAnimation`, so re-rendering the
-        // blocks to swap the flash tint never animates (and never reflows).
-        .environment(\.copiedCodeFlashURL, copiedFlashURL)
+        // Injected once (stable identity). Blocks and the HUD read its
+        // properties for the flash/pulse; this `body` does not, so a copy tap
+        // invalidates only those leaves, never the scroll container.
+        .environment(\.inlineCopyFeedback, copyFeedback)
         .environment(\.openURL, OpenURLAction { url in handle(link: url) })
+    }
+
+    /// Briefly pulses the arrived heading (the shipped live-reload accent
+    /// whisper), then clears it. `ChangePulseModifier` fades on the `false→true`
+    /// edge, so the id is removed first — covering a repeat tap on the same row.
+    private func pulseArrival(_ id: String) {
+        arrivalPulseIDs.remove(id)
+        arrivalPulseIDs.insert(id)
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(900))
+            arrivalPulseIDs.remove(id)
+        }
     }
 
     /// Copy an inline-code span to the pasteboard, flash the chip in place, and
@@ -69,16 +89,19 @@ struct DocumentRenderer: View {
 
         // In-place chip flash (state feedback — happens under Reduce Motion
         // too, since per-run text can't fade anyway it's a snap either way).
-        copiedFlashURL = url
-        flashResetTask?.cancel()
-        flashResetTask = Task {
+        // Bumping `pulse` also re-shows the HUD, even on a repeat copy of the
+        // same chip. Both writes hit only the injected feedback object, so the
+        // reading `body` is never invalidated.
+        copyFeedback.flashURL = url
+        copyFeedback.pulse &+= 1
+        let pulse = copyFeedback.pulse
+        Task {
             try? await Task.sleep(for: .seconds(Theme.Motion.flashHold))
-            guard !Task.isCancelled else { return }
-            copiedFlashURL = nil
+            // Clear only if no newer copy has claimed the flash since — no
+            // stored task to cancel, so nothing on this view is `@State`.
+            guard copyFeedback.pulse == pulse else { return }
+            copyFeedback.flashURL = nil
         }
-
-        // Secondary HUD confirmation, isolated in `CopyHUD`.
-        copyToken &+= 1
     }
 
     /// Relative `.md` links navigate in-window (with history); `#anchor` links
@@ -130,13 +153,14 @@ struct DocumentRenderer: View {
 
 /// The small glass "Copied" pill that fades in near the top of the window
 /// after a click-to-copy (Xcode-style, not a web toast). Isolated from the
-/// reading view so its fade animation lives entirely in this subtree: bumping
-/// `token` shows it, but the parent's block `LazyVStack` is never wrapped in
-/// the fade's animation transaction — the reflow-on-click bug. Respects Reduce
-/// Motion by snapping instead of fading.
+/// reading view so its fade animation lives entirely in this subtree: reading
+/// `pulse` off the injected feedback object re-shows it, but the parent's block
+/// `LazyVStack` is never wrapped in the fade's animation transaction — the
+/// reflow-on-click bug. Respects Reduce Motion by snapping instead of fading.
 private struct CopyHUD: View {
-    /// Incremented by the reading view on each copy; each bump re-shows.
-    let token: Int
+    /// Bumped by the reading view on each copy; each bump re-shows. Read here
+    /// (not passed down) so a copy never invalidates the reading `body`.
+    @Environment(\.inlineCopyFeedback) private var feedback
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var visible = false
@@ -157,7 +181,7 @@ private struct CopyHUD: View {
                     .allowsHitTesting(false)
             }
         }
-        .onChange(of: token) { _, _ in
+        .onChange(of: feedback?.pulse) { _, _ in
             hideTask?.cancel()
             if reduceMotion { visible = true }
             else { withAnimation(Theme.Motion.feedback) { visible = true } }

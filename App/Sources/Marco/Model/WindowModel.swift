@@ -59,7 +59,29 @@ final class WindowModel {
         didSet {
             controller?.window = window
             window?.representedURL = currentURL
+            observeLiveResize(of: window)
         }
+    }
+
+    /// True while the window is in a live-resize drag. Read imperatively (not in
+    /// a view `body`) to skip non-essential per-frame work — outline tracking's
+    /// O(n) section scan and the heading-offset probes — so the reading column
+    /// re-wraps without also churning that work each frame.
+    private(set) var isLiveResizing = false
+    private var liveResizeObservers: [NSObjectProtocol] = []
+
+    private func observeLiveResize(of window: NSWindow?) {
+        liveResizeObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        liveResizeObservers.removeAll()
+        isLiveResizing = false
+        guard let window else { return }
+        let center = NotificationCenter.default
+        liveResizeObservers.append(center.addObserver(
+            forName: NSWindow.willStartLiveResizeNotification, object: window, queue: .main
+        ) { [weak self] _ in MainActor.assumeIsolated { self?.isLiveResizing = true } })
+        liveResizeObservers.append(center.addObserver(
+            forName: NSWindow.didEndLiveResizeNotification, object: window, queue: .main
+        ) { [weak self] _ in MainActor.assumeIsolated { self?.isLiveResizing = false } })
     }
 
     // MARK: - History
@@ -89,6 +111,8 @@ final class WindowModel {
     func stop() {
         controller?.stop()
         hintClearTask?.cancel()
+        liveResizeObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        liveResizeObservers.removeAll()
     }
 
     private func activate(_ url: URL, restoreScroll: Bool) {
@@ -284,16 +308,31 @@ final class WindowModel {
 
     func toggleSidebar() { sidebarVisible.toggle() }
 
+    /// The heading an outline tap just jumped to, tagged with a token so the
+    /// reading view re-fires the arrival pulse even on a repeat tap of the same
+    /// row. `nil` until the first outline jump.
+    struct OutlineArrival: Equatable {
+        var id: String
+        var token: Int
+    }
+    private(set) var outlineArrival: OutlineArrival?
+    private var outlineArrivalToken = 0
+
     /// Jumps the reading view to a heading picked in the outline, anchoring it
-    /// to the top of the viewport. Always non-animated: an animated `scrollTo`
-    /// over the `LazyVStack`'s estimated offsets overshoots and snaps, so the
-    /// crisp anchored jump reads better than a janky glide (and matches the
-    /// Reduce-Motion path). `reduceMotion` is kept for call-site symmetry.
+    /// to the top of the viewport. The jump is instant and exact: an animated
+    /// `scrollTo` over the `LazyVStack`'s *estimated* offsets overshoots and
+    /// snaps, and SwiftUI's per-frame scroll primitives are too imprecise to
+    /// glide onto the anchor cleanly. Instead the landing is instant and a brief
+    /// arrival pulse on the target heading carries the sense of motion (skipped
+    /// under Reduce Motion, which gates only the pulse).
     func scrollToHeading(_ id: String, reduceMotion: Bool) {
         guard let controller else { return }
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) { controller.scrollPosition.scrollTo(id: id, anchor: .top) }
+        guard !reduceMotion else { return }
+        outlineArrivalToken &+= 1
+        outlineArrival = OutlineArrival(id: id, token: outlineArrivalToken)
     }
 
     // MARK: - Scroll memory
