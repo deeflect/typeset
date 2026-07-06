@@ -24,3 +24,4 @@ Tests/Fixtures/generated/
 
 # Claude Code local project state
 .claude/
+.impeccable/

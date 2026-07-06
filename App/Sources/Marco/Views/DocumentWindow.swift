@@ -49,6 +49,7 @@ struct DocumentWindow: View {
                 }
             }
         }
+        .frame(minWidth: 640, minHeight: 480)
         .environment(\.theme, theme)
         .environment(\.checkboxToggleHandler) { blockStartLine, lineOffset, checked in
             model.controller?.toggleCheckbox(blockStartLine: blockStartLine, itemLineOffset: lineOffset, checked: checked)
@@ -61,6 +62,7 @@ struct DocumentWindow: View {
             }
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: textScale)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: model.controller?.hasExternalChanges)
         .toolbar { toolbarContent }
         .background { WindowAccessor { model.window = $0 } }
         .focusedValue(\.windowModel, model)
@@ -173,7 +175,7 @@ struct DocumentWindow: View {
             HStack(spacing: 6) {
                 Text(model.currentURL?.lastPathComponent ?? Bundle.main.displayName)
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 if model.controller?.isFileRemoved == true {
@@ -182,6 +184,8 @@ struct DocumentWindow: View {
                         .foregroundStyle(.tertiary)
                 }
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 3)
         }
         if let controller = model.controller {
             ToolbarItem(placement: .automatic) {
@@ -189,25 +193,37 @@ struct DocumentWindow: View {
                     model.find.isActive ? model.closeFind() : model.openFind()
                 } label: {
                     Image(systemName: "magnifyingglass")
+                        .frame(minWidth: 24, minHeight: 22)
                 }
                 .help("Find (⌘F)")
+                .accessibilityLabel("Find")
             }
             ToolbarItem(placement: .automatic) {
                 Toggle(isOn: Binding(get: { controller.isEditing }, set: { _ in model.toggleEditMode() })) {
-                    Image(systemName: controller.isEditing ? "doc.richtext" : "pencil")
+                    Image(systemName: "pencil")
+                        .frame(minWidth: 24, minHeight: 22)
                 }
                 .toggleStyle(.button)
                 .help(controller.isEditing ? "Done Editing (⌘E)" : "Edit Source (⌘E)")
+                .accessibilityLabel("Edit Source")
             }
-            ToolbarItem(placement: .automatic) {
-                Toggle(isOn: Binding(
-                    get: { controller.followModeEnabled },
-                    set: { controller.followModeEnabled = $0 }
-                )) {
-                    Image(systemName: "arrow.down.to.line")
+            // Follow mode is contextual: hidden until the file first changes on
+            // disk (the only moment it's meaningful), then revealed with a
+            // quiet transition. The menu item (⌥⌘F) stays available regardless.
+            if controller.hasExternalChanges {
+                ToolbarItem(placement: .automatic) {
+                    Toggle(isOn: Binding(
+                        get: { controller.followModeEnabled },
+                        set: { controller.followModeEnabled = $0 }
+                    )) {
+                        Image(systemName: "text.line.last.and.arrowtriangle.forward")
+                            .frame(minWidth: 24, minHeight: 22)
+                    }
+                    .toggleStyle(.button)
+                    .help("Follow live changes — auto-scroll to the newest edit (⌥⌘F)")
+                    .accessibilityLabel("Follow Live Changes")
+                    .transition(.opacity)
                 }
-                .toggleStyle(.button)
-                .help("Follow Mode — auto-scroll to the latest change while the file is edited on disk")
             }
         }
     }

@@ -22,6 +22,8 @@ struct MarcoApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified(showsTitle: false))
+        .defaultSize(width: 820, height: 1040)
+        .windowResizability(.contentMinSize)
         .commands {
             MarcoCommands(openPanel: { appDelegate.openPanel() })
         }

@@ -90,7 +90,14 @@ struct ChangePulseModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .background(theme.accent.opacity(opacity))
+            .background {
+                // A rounded tint slightly inset from the block edges — a
+                // whisper hugging the content, not a hard full-width band.
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(theme.accent.opacity(opacity))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+            }
             .onChange(of: isPulsing, initial: true) { _, newValue in
                 guard newValue else { return }
                 if reduceMotion {

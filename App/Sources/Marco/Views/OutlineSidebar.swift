@@ -18,6 +18,11 @@ struct OutlineSidebar: View {
     /// doesn't ping-pong the highlight.
     @State private var currentID: String?
     @State private var trackTask: Task<Void, Never>?
+    /// After a click sets `currentID` optimistically, the scroll-position
+    /// tracker re-derives the same value on its debounce and re-fires the
+    /// highlight. Ignore tracker updates until this instant so the highlight
+    /// settles exactly once on the clicked row.
+    @State private var suppressTrackingUntil: Date = .distantPast
 
     private var blocks: [Block] { model.controller?.blocks ?? [] }
     private var items: [OutlineItem] { OutlineBuilder.build(from: blocks) }
@@ -49,6 +54,7 @@ struct OutlineSidebar: View {
         Button {
             model.scrollToHeading(item.id, reduceMotion: reduceMotion)
             currentID = item.id
+            suppressTrackingUntil = Date().addingTimeInterval(0.35)
         } label: {
             Text(item.title)
                 .font(.system(size: 13, weight: item.level <= 2 ? .semibold : .regular))
@@ -80,6 +86,7 @@ struct OutlineSidebar: View {
         trackTask = Task {
             try? await Task.sleep(for: .milliseconds(70))
             guard !Task.isCancelled else { return }
+            guard Date() >= suppressTrackingUntil else { return }
             currentID = nearestHeading(topBlockID: top)
         }
     }

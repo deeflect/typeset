@@ -83,6 +83,12 @@ struct SourceEditorView: NSViewRepresentable {
         textView.allowsUndo = true
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
+        // Without an explicit min/max, a vertically-resizable NSTextView built
+        // by hand keeps its `.zero` frame height as its max, so the document
+        // view never grows past the clip view and there's nothing to scroll
+        // (P0). Let it grow unbounded vertically.
+        textView.minSize = .zero
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.autoresizingMask = [NSView.AutoresizingMask.width]
         textView.textContainerInset = NSSize(width: 24, height: 20)
         textView.delegate = context.coordinator
@@ -97,6 +103,14 @@ struct SourceEditorView: NSViewRepresentable {
         scrollView.autohidesScrollers = true
         scrollView.documentView = textView
         scrollView.drawsBackground = false
+
+        // ⌘E should land the caret in the editor ready to type. The window
+        // isn't resolved yet at make-time, so defer first-responder to the
+        // next runloop turn once the view is in a window.
+        DispatchQueue.main.async { [weak textView] in
+            guard let textView, let window = textView.window else { return }
+            window.makeFirstResponder(textView)
+        }
 
         MarkdownSyntaxStyler.styleFullDocument(textStorage, baseFont: Self.font, colors: colors)
         return scrollView

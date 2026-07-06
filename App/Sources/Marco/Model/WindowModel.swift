@@ -56,7 +56,10 @@ final class WindowModel {
     var readingTheme = Theme(colorScheme: .light, scale: 1)
 
     weak var window: NSWindow? {
-        didSet { controller?.window = window }
+        didSet {
+            controller?.window = window
+            window?.representedURL = currentURL
+        }
     }
 
     // MARK: - History
@@ -100,6 +103,10 @@ final class WindowModel {
         }
         self.controller = controller
         controller.start()
+        // Standard document proxy behaviors (⌘-click path menu, title drag)
+        // come free from representedURL; keep it pointed at the live document
+        // as history/navigation swaps the controller.
+        window?.representedURL = url
         // Remember this document for the empty-state home screen (PLAN §6).
         RecentDocumentsStore.shared.record(url)
 
@@ -277,17 +284,16 @@ final class WindowModel {
 
     func toggleSidebar() { sidebarVisible.toggle() }
 
-    /// Smooth-scrolls the reading view to a heading picked in the outline;
-    /// jumps instantly under Reduce Motion.
+    /// Jumps the reading view to a heading picked in the outline, anchoring it
+    /// to the top of the viewport. Always non-animated: an animated `scrollTo`
+    /// over the `LazyVStack`'s estimated offsets overshoots and snaps, so the
+    /// crisp anchored jump reads better than a janky glide (and matches the
+    /// Reduce-Motion path). `reduceMotion` is kept for call-site symmetry.
     func scrollToHeading(_ id: String, reduceMotion: Bool) {
         guard let controller else { return }
-        if reduceMotion {
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) { controller.scrollPosition.scrollTo(id: id) }
-        } else {
-            withAnimation(.easeInOut(duration: 0.32)) { controller.scrollPosition.scrollTo(id: id) }
-        }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { controller.scrollPosition.scrollTo(id: id, anchor: .top) }
     }
 
     // MARK: - Scroll memory

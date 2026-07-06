@@ -94,7 +94,7 @@ public struct CodeBlockView: View {
                     .opacity(hovering ? 0.55 : 0.85)
             }
             copyButton
-                .opacity(hovering ? 1 : 0)
+                .opacity(hovering ? 1 : 0.35)
         }
         .padding(.top, 9)
         .padding(.trailing, 12)

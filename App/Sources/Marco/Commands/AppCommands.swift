@@ -94,6 +94,7 @@ struct MarcoCommands: Commands {
             Button((model?.controller?.followModeEnabled ?? false) ? "Turn Off Follow Mode" : "Turn On Follow Mode") {
                 model?.controller?.followModeEnabled.toggle()
             }
+            .keyboardShortcut("f", modifiers: [.command, .option])
             .disabled(!hasDocument)
         }
 

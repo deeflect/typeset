@@ -50,6 +50,7 @@ struct FindBar: View {
             }
             .toggleStyle(.button)
             .help("Match Case")
+            .accessibilityLabel("Match Case")
 
             Divider().frame(height: 16)
 
@@ -57,15 +58,18 @@ struct FindBar: View {
                 .buttonStyle(.plain)
                 .disabled(find.matchCount == 0)
                 .help("Previous Match (⇧⌘G)")
+                .accessibilityLabel("Previous Match")
             Button { model.findNext() } label: { Image(systemName: "chevron.down") }
                 .buttonStyle(.plain)
                 .disabled(find.matchCount == 0)
                 .help("Next Match (⌘G)")
+                .accessibilityLabel("Next Match")
 
             Button { model.closeFind() } label: { Image(systemName: "xmark") }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .help("Done (Esc)")
+                .accessibilityLabel("Done")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)

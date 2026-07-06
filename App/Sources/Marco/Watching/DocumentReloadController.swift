@@ -27,6 +27,10 @@ final class DocumentReloadController {
     /// now. Populated only by watcher-driven reloads, never by the initial
     /// load or a text-scale change.
     private(set) var pulsedBlockIDs: Set<String> = []
+    /// Flips true the first time this document changes on disk under us.
+    /// Gates the contextual reveal of the follow-mode toolbar toggle, which
+    /// is meaningless until a file is actually being rewritten live.
+    private(set) var hasExternalChanges = false
 
     // MARK: - M3: source edit mode, save, conflict banner
 
@@ -155,6 +159,7 @@ final class DocumentReloadController {
     /// the buffer untouched until the user decides. Never a modal dialog.
     private func handleExternalChange() {
         guard loadError == nil else { return }
+        hasExternalChanges = true
         if isEditing {
             let (newState, action) = EditConflictMachine.transition(state: conflictState, event: .externalChange)
             conflictState = newState
