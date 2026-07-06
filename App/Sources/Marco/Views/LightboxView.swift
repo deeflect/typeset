@@ -63,7 +63,7 @@ struct LightboxView: View {
         .opacity(appeared ? 1 : 0)
         .onAppear {
             guard !reduceMotion else { appeared = true; return }
-            withAnimation(.easeOut(duration: 0.2)) { appeared = true }
+            withAnimation(Theme.Motion.state) { appeared = true }
         }
     }
 
@@ -71,7 +71,7 @@ struct LightboxView: View {
 
     private func dismiss() {
         guard reduceMotion == false else { onDismiss(); return }
-        withAnimation(.easeOut(duration: 0.16)) { appeared = false }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) { onDismiss() }
+        withAnimation(Theme.Motion.stateExit) { appeared = false }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Theme.Motion.exitDuration) { onDismiss() }
     }
 }

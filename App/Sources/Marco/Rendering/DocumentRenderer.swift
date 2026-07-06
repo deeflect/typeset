@@ -14,8 +14,15 @@ struct DocumentRenderer: View {
     let documentURL: URL?
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var copyToast = false
-    @State private var copyToastTask: Task<Void, Never>?
+    /// Bumped on every inline-code copy to trigger the isolated HUD. Kept
+    /// separate from `copiedFlashURL` so the HUD's fade animation lives in its
+    /// own subview and never wraps the block `LazyVStack` in an animation
+    /// transaction (which reflowed chips on click — see `CopyHUD`).
+    @State private var copyToken = 0
+    /// The chip currently showing its in-place "copied" flash. Threaded to the
+    /// blocks via `copiedCodeFlashURL`; set/cleared without `withAnimation`.
+    @State private var copiedFlashURL: URL?
+    @State private var flashResetTask: Task<Void, Never>?
 
     var body: some View {
         ScrollView {
@@ -41,52 +48,37 @@ struct DocumentRenderer: View {
         }
         .scrollPosition($controller.scrollPosition)
         .background(theme.background)
-        .overlay(alignment: .top) { copyHUD }
+        .overlay(alignment: .top) { CopyHUD(token: copyToken) }
         .environment(\.documentBaseURL, documentURL)
         // Zero cost when find is closed: `highlightContext` is nil, so block
         // views short-circuit all find work.
         .environment(\.findHighlight, model.find.highlightContext)
+        // The one chip currently flashing "copied", if any. `nil` ⇒ blocks do
+        // no flash work. Set without `withAnimation`, so re-rendering the
+        // blocks to swap the flash tint never animates (and never reflows).
+        .environment(\.copiedCodeFlashURL, copiedFlashURL)
         .environment(\.openURL, OpenURLAction { url in handle(link: url) })
     }
 
-    /// A small glass "Copied" pill that fades in near the top of the window
-    /// after a click-to-copy on an inline-code span (Xcode-style, not a web
-    /// toast). Respects Reduce Motion by snapping instead of fading.
-    @ViewBuilder
-    private var copyHUD: some View {
-        if copyToast {
-            Label("Copied", systemImage: "checkmark")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(theme.textPrimary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(.regularMaterial, in: Capsule())
-                .overlay(Capsule().strokeBorder(theme.chipStroke, lineWidth: 1))
-                .padding(.top, 14)
-                .transition(reduceMotion ? .identity : .opacity.combined(with: .move(edge: .top)))
-                .allowsHitTesting(false)
-        }
-    }
-
-    /// Copy an inline-code span to the pasteboard and flash the HUD.
-    private func copyInlineCode(_ code: String) {
+    /// Copy an inline-code span to the pasteboard, flash the chip in place, and
+    /// fire the secondary HUD. `url` is the chip's own `marco-copy://` link, so
+    /// the flash lands on exactly the run that was clicked.
+    private func copyInlineCode(_ code: String, url: URL) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(code, forType: .string)
-        copyToastTask?.cancel()
-        if reduceMotion {
-            copyToast = true
-        } else {
-            withAnimation(.easeOut(duration: 0.18)) { copyToast = true }
-        }
-        copyToastTask = Task {
-            try? await Task.sleep(for: .seconds(1.0))
+
+        // In-place chip flash (state feedback — happens under Reduce Motion
+        // too, since per-run text can't fade anyway it's a snap either way).
+        copiedFlashURL = url
+        flashResetTask?.cancel()
+        flashResetTask = Task {
+            try? await Task.sleep(for: .seconds(Theme.Motion.flashHold))
             guard !Task.isCancelled else { return }
-            if reduceMotion {
-                copyToast = false
-            } else {
-                withAnimation(.easeOut(duration: 0.25)) { copyToast = false }
-            }
+            copiedFlashURL = nil
         }
+
+        // Secondary HUD confirmation, isolated in `CopyHUD`.
+        copyToken &+= 1
     }
 
     /// Relative `.md` links navigate in-window (with history); `#anchor` links
@@ -97,7 +89,7 @@ struct DocumentRenderer: View {
         // app; the Quick Look extension has no `openURL` handler, so the same
         // link is an inert no-op there.
         if let code = InlineCodeCopy.code(from: url) {
-            copyInlineCode(code)
+            copyInlineCode(code, url: url)
             return .handled
         }
 
@@ -133,6 +125,49 @@ struct DocumentRenderer: View {
                 .standardizedFileURL
         }
         return url.standardizedFileURL
+    }
+}
+
+/// The small glass "Copied" pill that fades in near the top of the window
+/// after a click-to-copy (Xcode-style, not a web toast). Isolated from the
+/// reading view so its fade animation lives entirely in this subtree: bumping
+/// `token` shows it, but the parent's block `LazyVStack` is never wrapped in
+/// the fade's animation transaction — the reflow-on-click bug. Respects Reduce
+/// Motion by snapping instead of fading.
+private struct CopyHUD: View {
+    /// Incremented by the reading view on each copy; each bump re-shows.
+    let token: Int
+    @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var visible = false
+    @State private var hideTask: Task<Void, Never>?
+
+    var body: some View {
+        Group {
+            if visible {
+                Label("Copied", systemImage: "checkmark")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(theme.textPrimary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(.regularMaterial, in: Capsule())
+                    .overlay(Capsule().strokeBorder(theme.chipStroke, lineWidth: 1))
+                    .padding(.top, 14)
+                    .transition(reduceMotion ? .identity : .opacity.combined(with: .move(edge: .top)))
+                    .allowsHitTesting(false)
+            }
+        }
+        .onChange(of: token) { _, _ in
+            hideTask?.cancel()
+            if reduceMotion { visible = true }
+            else { withAnimation(Theme.Motion.feedback) { visible = true } }
+            hideTask = Task {
+                try? await Task.sleep(for: .seconds(1.0))
+                guard !Task.isCancelled else { return }
+                if reduceMotion { visible = false }
+                else { withAnimation(Theme.Motion.stateExit) { visible = false } }
+            }
+        }
     }
 }
 

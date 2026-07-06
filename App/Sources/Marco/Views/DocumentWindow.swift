@@ -61,8 +61,8 @@ struct DocumentWindow: View {
                     .transition(.opacity)
             }
         }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: textScale)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: model.controller?.hasExternalChanges)
+        .animation(reduceMotion ? nil : Theme.Motion.state, value: textScale)
+        .animation(reduceMotion ? nil : Theme.Motion.state, value: model.controller?.hasExternalChanges)
         .toolbar { toolbarContent }
         .background { WindowAccessor { model.window = $0 } }
         .focusedValue(\.windowModel, model)
@@ -112,7 +112,7 @@ struct DocumentWindow: View {
                         .transition(.opacity)
                 }
             }
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: controller.isEditing)
+            .animation(reduceMotion ? nil : Theme.Motion.state, value: controller.isEditing)
         }
     }
 
@@ -137,8 +137,8 @@ struct DocumentWindow: View {
             }
         }
         .padding(.top, 8)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: model.find.isActive)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: model.accessHint)
+        .animation(reduceMotion ? nil : Theme.Motion.state, value: model.find.isActive)
+        .animation(reduceMotion ? nil : Theme.Motion.state, value: model.accessHint)
     }
 
     @ViewBuilder

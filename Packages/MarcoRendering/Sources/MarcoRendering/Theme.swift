@@ -59,6 +59,15 @@ public struct Theme: Equatable {
     }
     public var inlineCodeText: Color { textPrimary }
 
+    /// In-place "copied" acknowledgment for an inline-code chip: the clicked
+    /// span briefly inverts to a filled accent surface with contrasting text,
+    /// then reverts (see `Theme.Motion.flashHold`). State feedback, not
+    /// decoration — it fires even under Reduce Motion, just without a fade.
+    public var inlineCodeFlashFill: Color { accent }
+    public var inlineCodeFlashText: Color {
+        isDark ? Color.black.opacity(0.92) : Color.white
+    }
+
     public var quoteBar: Color { accent.opacity(isDark ? 0.85 : 0.75) }
     public var quoteText: Color { textSecondary }
     public var quoteFill: Color { accent.opacity(isDark ? 0.06 : 0.045) }
@@ -180,6 +189,58 @@ public struct Theme: Equatable {
     }
 }
 
+public extension Theme {
+    /// The app's motion vocabulary (product register): motion conveys state,
+    /// never decoration. Ease-out only — no bounce/elastic. Feedback is
+    /// instant (~120ms); state changes are 200–300ms; exits run ~75% of their
+    /// entry so dismissals feel quicker than arrivals. Every animated call
+    /// site pairs these with a Reduce Motion branch (snap, no fade).
+    enum Motion {
+        /// Instant acknowledgment: hover/press tints, focus, button feedback.
+        public static let feedbackDuration: Double = 0.12
+        /// State change: crossfades, banner/find-bar enter, follow reveal.
+        public static let stateDuration: Double = 0.22
+        /// Exit: ~75% of `stateDuration` so dismissals feel quicker.
+        public static let exitDuration: Double = 0.16
+        /// How long an inline-code chip holds its "copied" flash before
+        /// reverting (state feedback; fires under Reduce Motion too).
+        public static let flashHold: Double = 0.6
+
+        public static let feedback: Animation = .easeOut(duration: feedbackDuration)
+        public static let state: Animation = .easeOut(duration: stateDuration)
+        public static let stateExit: Animation = .easeOut(duration: exitDuration)
+    }
+}
+
 public extension EnvironmentValues {
     @Entry var theme: Theme = Theme(colorScheme: .light, scale: 1)
+
+    /// The `marco-copy://` URL of the inline-code chip that was just clicked,
+    /// injected by the reading view for the brief in-place "copied" flash
+    /// (see `applyingCopiedFlash`). `nil` (the default, and always in Quick
+    /// Look) means no chip is flashing and leaf views do zero flash work.
+    @Entry var copiedCodeFlashURL: URL? = nil
+}
+
+/// Applies the in-place "copied" flash onto a block's rendered
+/// `AttributedString`: if `flashURL` is set, every inline-code run carrying
+/// that exact `marco-copy://` link (the code chip that was clicked) inverts to
+/// the accent flash fill. Runs *outside* `InlineMarkdown`'s cache — like
+/// `applyingFindHighlight` — so flash-styled strings never pollute the cache,
+/// and it only recolors runs (no font/metric change) so a flashing chip can
+/// never shift layout. Returns `base` untouched, doing no work, when no chip
+/// is flashing.
+@MainActor
+func applyingCopiedFlash(
+    _ base: AttributedString, flashURL: URL?, theme: Theme
+) -> AttributedString {
+    guard let flashURL else { return base }
+    var copy = base
+    var didFlash = false
+    for run in copy.runs where run.link == flashURL {
+        copy[run.range].backgroundColor = theme.inlineCodeFlashFill
+        copy[run.range].foregroundColor = theme.inlineCodeFlashText
+        didFlash = true
+    }
+    return didFlash ? copy : base
 }

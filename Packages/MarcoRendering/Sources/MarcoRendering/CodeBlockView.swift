@@ -98,7 +98,7 @@ public struct CodeBlockView: View {
         }
         .padding(.top, 9)
         .padding(.trailing, 12)
-        .animation(.easeOut(duration: 0.15), value: hovering)
+        .animation(Theme.Motion.feedback, value: hovering)
     }
 
     private var copyButton: some View {
@@ -123,7 +123,7 @@ public struct CodeBlockView: View {
         if reduceMotion {
             copied = true
         } else {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { copied = true }
+            withAnimation(Theme.Motion.state) { copied = true }
         }
         copyResetTask?.cancel()
         copyResetTask = Task {
@@ -132,7 +132,7 @@ public struct CodeBlockView: View {
             if reduceMotion {
                 copied = false
             } else {
-                withAnimation(.easeOut(duration: 0.25)) { copied = false }
+                withAnimation(Theme.Motion.stateExit) { copied = false }
             }
         }
     }

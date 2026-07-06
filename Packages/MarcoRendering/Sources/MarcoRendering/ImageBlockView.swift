@@ -116,7 +116,7 @@ struct ImageBlockView: View {
                 .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .padding(10)
                 .opacity(hovering ? 1 : 0)
-                .animation(.easeOut(duration: 0.15), value: hovering)
+                .animation(.easeOut(duration: Theme.Motion.feedbackDuration), value: hovering)
                 .allowsHitTesting(false)
         }
     }

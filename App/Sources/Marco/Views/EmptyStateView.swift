@@ -60,7 +60,7 @@ struct EmptyStateView: View {
         .overlay {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .strokeBorder(isTargeted ? theme.accent : .clear, lineWidth: 2)
-                .animation(.easeOut(duration: 0.15), value: isTargeted)
+                .animation(Theme.Motion.feedback, value: isTargeted)
         }
         .padding(40)
     }

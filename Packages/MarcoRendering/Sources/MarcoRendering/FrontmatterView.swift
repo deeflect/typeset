@@ -16,7 +16,7 @@ struct FrontmatterView: View {
                 if reduceMotion {
                     expanded.toggle()
                 } else {
-                    withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
+                    withAnimation(Theme.Motion.state) {
                         expanded.toggle()
                     }
                 }

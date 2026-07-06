@@ -118,15 +118,17 @@ private struct CheckboxMarker: View {
     }
 
     private func toggle() {
-        let spring = Animation.spring(response: 0.28, dampingFraction: 0.55)
         if reduceMotion {
             action()
-        } else {
-            withAnimation(spring) { isPressed = true }
-            withAnimation(spring.delay(0.05)) {
-                isPressed = false
-                action()
-            }
+            return
+        }
+        // Quiet ease-out press: a quick dip, then release as the glyph swaps
+        // (symbolEffect handles the check itself). No spring — the doctrine is
+        // ease-out only, no bounce.
+        withAnimation(.easeOut(duration: 0.10)) { isPressed = true }
+        withAnimation(.easeOut(duration: Theme.Motion.stateDuration).delay(0.06)) {
+            isPressed = false
+            action()
         }
     }
 }

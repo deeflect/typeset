@@ -66,7 +66,11 @@ struct OutlineSidebar: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .listRowBackground(isCurrent ? theme.accent.opacity(0.12) : Color.clear)
+        .listRowBackground(
+            (isCurrent ? theme.accent.opacity(0.12) : Color.clear)
+                .animation(reduceMotion ? nil : Theme.Motion.state, value: isCurrent)
+        )
+        .animation(reduceMotion ? nil : Theme.Motion.state, value: isCurrent)
     }
 
     private var emptyState: some View {
