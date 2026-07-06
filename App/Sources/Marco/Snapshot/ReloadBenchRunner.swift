@@ -15,6 +15,14 @@ import MarcoCore
 ///   MARCO_RELOAD_BENCH_TIMEOUT=20  (optional: exit after this many seconds)
 @MainActor
 enum ReloadBenchRunner {
+    /// Keeps the bench's `DocumentReloadController` alive for the whole
+    /// process. In the real app the controller is retained by
+    /// `DocumentWindow`'s `@State`; here there is no window, so without this
+    /// the controller (and its `FileWatcher`) would deallocate the moment
+    /// `runIfRequested()` returns — `FileWatcher.deinit` cancels its dispatch
+    /// sources, so every subsequent file change would go unobserved.
+    private static var retainedController: DocumentReloadController?
+
     static func runIfRequested() -> Bool {
         let env = ProcessInfo.processInfo.environment
         guard let path = env["MARCO_RELOAD_BENCH"] else { return false }
@@ -24,6 +32,7 @@ enum ReloadBenchRunner {
         let url = URL(fileURLWithPath: path)
 
         let controller = DocumentReloadController(url: url)
+        retainedController = controller
         var observedCount = 0
 
         func log(_ message: String) {
