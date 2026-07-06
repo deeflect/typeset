@@ -21,3 +21,6 @@ Tests/Fixtures/generated/
 # Local build output for snapshot/verification (see SnapshotRunner)
 .build-dd/
 .build-snap/
+
+# Claude Code local project state
+.claude/
