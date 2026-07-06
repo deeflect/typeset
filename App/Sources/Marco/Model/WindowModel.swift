@@ -2,6 +2,7 @@ import AppKit
 import MarcoCore
 import Observation
 import SwiftUI
+import MarcoRendering
 
 /// The per-window brain that sits above `DocumentReloadController`. It owns
 /// everything that survives *across* files within one window — the

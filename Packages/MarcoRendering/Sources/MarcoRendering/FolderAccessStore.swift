@@ -7,8 +7,8 @@ import os
 /// under, a folder path; used both to answer `access(to:)` and to decide
 /// whether a folder (or any of its subfolders) has already been granted, so
 /// we never prompt twice for the same tree (PLAN §8 risk #5).
-enum FolderAccessPathing {
-    static func isPath(_ candidate: String, containedIn folder: String) -> Bool {
+public enum FolderAccessPathing {
+    public static func isPath(_ candidate: String, containedIn folder: String) -> Bool {
         let normFolder = normalize(folder)
         let normCandidate = normalize(candidate)
         guard !normFolder.isEmpty else { return false }
@@ -17,7 +17,7 @@ enum FolderAccessPathing {
     }
 
     /// The first granted folder (if any) that already covers `candidate`.
-    static func coveringFolder(for candidate: String, among granted: [String]) -> String? {
+    public static func coveringFolder(for candidate: String, among granted: [String]) -> String? {
         granted.first { isPath(candidate, containedIn: $0) }
     }
 
@@ -36,13 +36,13 @@ enum FolderAccessPathing {
 /// each folder's security scope open for the process lifetime (mirrors how
 /// `DocumentReloadController` holds the opened document's own scope).
 @MainActor
-final class FolderAccessStore {
-    static let shared = FolderAccessStore()
+public final class FolderAccessStore {
+    public static let shared = FolderAccessStore()
 
     /// Posted after a new folder grant is stored (and its scope started),
     /// so already-visible views (image cards) can re-attempt their load in
     /// place without needing a central registry of pending loads.
-    static let accessGrantedNotification = Notification.Name("FolderAccessStore.accessGranted")
+    public static let accessGrantedNotification = Notification.Name("FolderAccessStore.accessGranted")
 
     private struct ActiveGrant {
         let path: String
@@ -66,11 +66,11 @@ final class FolderAccessStore {
 
     // MARK: - Document lifecycle (exact-file grant)
 
-    func noteDocumentOpened(_ url: URL) {
+    public func noteDocumentOpened(_ url: URL) {
         openDocumentPaths.insert(url.standardizedFileURL.path)
     }
 
-    func noteDocumentClosed(_ url: URL) {
+    public func noteDocumentClosed(_ url: URL) {
         openDocumentPaths.remove(url.standardizedFileURL.path)
     }
 
@@ -78,7 +78,7 @@ final class FolderAccessStore {
 
     /// Walks: exact-file grant (the opened doc) first, then any stored
     /// ancestor-folder bookmark.
-    func access(to url: URL) -> Bool {
+    public func access(to url: URL) -> Bool {
         let path = url.standardizedFileURL.path
         if openDocumentPaths.contains(path) { return true }
         return FolderAccessPathing.coveringFolder(for: path, among: active.map(\.path)) != nil
@@ -88,7 +88,7 @@ final class FolderAccessStore {
     /// than, say, the file simply not existing) — distinguishes "show the
     /// Allow-access affordance" from "show a generic unavailable state".
     /// Sandbox denials surface as `EPERM`; a missing file is `ENOENT`.
-    nonisolated static func isAccessDenied(at url: URL) -> Bool {
+    nonisolated public static func isAccessDenied(at url: URL) -> Bool {
         guard url.isFileURL else { return false }
         let fd = open(url.path, O_RDONLY)
         if fd >= 0 {
@@ -105,7 +105,7 @@ final class FolderAccessStore {
     /// starts accessing it immediately. Only ever called from the user's
     /// explicit tap on the access-hint affordance — never spontaneously.
     @discardableResult
-    func requestAccess(defaultDirectory: URL, message: String) -> URL? {
+    public func requestAccess(defaultDirectory: URL, message: String) -> URL? {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false

@@ -1,5 +1,6 @@
 import AppKit
 import MarcoCore
+import MarcoRendering
 import SwiftUI
 
 /// The reading window. Owns one `WindowModel` (history, outline sidebar, ⌘F
@@ -244,15 +245,5 @@ struct DocumentWindow: View {
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.background)
-    }
-}
-
-extension Bundle {
-    /// Never hardcode the app name in UI strings — read it from the bundle so
-    /// renaming stays a single xcconfig edit.
-    var displayName: String {
-        (object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
-            ?? (object(forInfoDictionaryKey: "CFBundleName") as? String)
-            ?? "Untitled"
     }
 }

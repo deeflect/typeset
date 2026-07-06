@@ -1,4 +1,5 @@
 import SwiftUI
+import MarcoRendering
 
 /// The ⌘F in-window find bar: a glass strip that slides in under the toolbar.
 /// Case-insensitive by default, live match count ("3 of 17"), next/prev

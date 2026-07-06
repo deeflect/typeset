@@ -1,6 +1,7 @@
 import AppKit
 import MarcoCore
 import UniformTypeIdentifiers
+import MarcoRendering
 
 /// PLAN §2 J5: Export PDF (⌘⇧E) and Print (⌘P), sharing one path so both
 /// use the same reading-theme (light variant) rendering. Paginates via an

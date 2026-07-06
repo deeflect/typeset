@@ -1,6 +1,7 @@
 import AppKit
 import MarcoCore
 import SwiftUI
+import MarcoRendering
 
 /// Headless snapshot path: renders a Markdown file to PNGs (light + dark)
 /// with `ImageRenderer`, entirely in-process, so the reading view can be

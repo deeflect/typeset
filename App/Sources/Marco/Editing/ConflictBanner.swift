@@ -1,4 +1,5 @@
 import SwiftUI
+import MarcoRendering
 
 /// PLAN §4's non-modal conflict banner: shown inside the window's top edge
 /// when the watcher reports the file changed on disk while the source

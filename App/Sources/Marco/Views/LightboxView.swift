@@ -1,4 +1,5 @@
 import AppKit
+import MarcoRendering
 import SwiftUI
 
 /// A Quick Look-style full-window image lightbox (PLAN §6). Presented over the
@@ -73,10 +74,4 @@ struct LightboxView: View {
         withAnimation(.easeOut(duration: 0.16)) { appeared = false }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) { onDismiss() }
     }
-}
-
-extension EnvironmentValues {
-    /// Reading-view images call this to open the full-window lightbox. `nil`
-    /// (snapshot / Quick Look) leaves images non-interactive.
-    @Entry var presentLightbox: ((NSImage) -> Void)? = nil
 }

@@ -1,5 +1,6 @@
 import AppKit
 import UniformTypeIdentifiers
+import MarcoRendering
 
 /// Bridges AppKit-only entry points (Finder double-click / drag-to-Dock,
 /// and the classic `NSOpenPanel`) into SwiftUI's `openWindow` action.

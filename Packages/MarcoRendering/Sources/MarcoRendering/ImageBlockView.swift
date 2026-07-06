@@ -3,8 +3,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// Detects a paragraph that is nothing but a single image.
-enum InlineImage {
-    static func soleImage(in raw: String) -> (alt: String, source: String)? {
+public enum InlineImage {
+    public static func soleImage(in raw: String) -> (alt: String, source: String)? {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard text.hasPrefix("!["), text.hasSuffix(")"),
               let altEnd = text.firstIndex(of: "]"),
@@ -227,7 +227,7 @@ struct ImageBlockView: View {
     }
 }
 
-extension EnvironmentValues {
+public extension EnvironmentValues {
     /// The URL of the document currently being rendered, used to resolve
     /// relative image and link paths.
     @Entry var documentBaseURL: URL? = nil

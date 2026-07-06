@@ -12,6 +12,8 @@ configFiles:
 packages:
   MarcoCore:
     path: Packages/MarcoCore
+  MarcoRendering:
+    path: Packages/MarcoRendering
   swift-markdown:
     url: https://github.com/apple/swift-markdown.git
     from: 0.6.0
@@ -32,7 +34,10 @@ targets:
         buildPhase: resources
     dependencies:
       - package: MarcoCore
+      - package: MarcoRendering
       - package: Highlightr
+      - target: MarcoQuickLook
+        embed: true
     settings:
       base:
         PRODUCT_NAME: $(APP_NAME)
@@ -51,7 +56,7 @@ targets:
         CFBundleDocumentTypes:
           - CFBundleTypeName: Markdown Document
             CFBundleTypeRole: Editor
-            LSHandlerRank: Alternate
+            LSHandlerRank: Default
             LSItemContentTypes:
               - net.daringfireball.markdown
         UTImportedTypeDeclarations:
@@ -70,6 +75,38 @@ targets:
         com.apple.security.app-sandbox: true
         com.apple.security.files.user-selected.read-write: true
         com.apple.security.print: true
+  MarcoQuickLook:
+    type: app-extension
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: App/Sources/MarcoQuickLook
+    dependencies:
+      - package: MarcoCore
+      - package: MarcoRendering
+    settings:
+      base:
+        PRODUCT_NAME: MarcoQuickLook
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID).quicklook
+        MARKETING_VERSION: $(MARKETING_VERSION)
+        SWIFT_EMIT_LOC_STRINGS: NO
+        SKIP_INSTALL: YES
+    info:
+      path: App/Sources/MarcoQuickLook/Info.plist
+      properties:
+        CFBundleDisplayName: $(APP_NAME) Quick Look
+        NSHumanReadableCopyright: ""
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.quicklook.preview
+          NSExtensionPrincipalClass: PreviewViewController
+        QLSupportedContentTypes:
+          - net.daringfireball.markdown
+        QLSupportsSearchableItems: false
+    entitlements:
+      path: App/Sources/MarcoQuickLook/MarcoQuickLook.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.files.user-selected.read-only: true
   MarcoTests:
     type: bundle.unit-test
     platform: macOS
@@ -78,6 +115,7 @@ targets:
       - path: App/Tests/MarcoTests
     dependencies:
       - target: Marco
+      - package: MarcoRendering
     settings:
       base:
         SWIFT_EMIT_LOC_STRINGS: NO
@@ -88,6 +126,7 @@ schemes:
     build:
       targets:
         Marco: all
+        MarcoQuickLook: all
         MarcoTests: [test]
     test:
       config: Debug

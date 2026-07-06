@@ -4,6 +4,7 @@ import MarcoCore
 import Observation
 import SwiftUI
 import os
+import MarcoRendering
 
 /// Owns everything about keeping a `DocumentWindow` in sync with its file
 /// on disk: the initial parse, the `FileWatcher`, the off-main

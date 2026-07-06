@@ -1,4 +1,5 @@
 import SwiftUI
+import MarcoRendering
 
 /// A quiet, non-modal hint (PLAN §4: never a modal) shown when a relative
 /// link points at a file outside the sandbox scope the user granted. Auto-

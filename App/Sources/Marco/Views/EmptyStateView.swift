@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
+import MarcoRendering
 
 /// The no-document "home screen" (PLAN §6): a single centered glass card that
 /// is the whole window when opened without a file. It carries the app's

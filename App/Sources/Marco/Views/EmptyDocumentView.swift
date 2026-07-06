@@ -1,4 +1,5 @@
 import SwiftUI
+import MarcoRendering
 
 /// Shown when an *opened* file has no content — either it was empty to
 /// begin with, or a live reload observed it become empty (e.g. an agent

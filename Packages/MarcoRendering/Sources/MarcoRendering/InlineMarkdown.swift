@@ -13,7 +13,7 @@ import SwiftUI
 /// Results are cached by (source, appearance, scale) because
 /// `AttributedString(markdown:)` is the per-block hot path on large
 /// documents — this keeps 1 MB scrolling smooth.
-enum InlineMarkdown {
+public enum InlineMarkdown {
     private struct Key: Hashable {
         let source: String
         let isDark: Bool
@@ -24,7 +24,7 @@ enum InlineMarkdown {
     @MainActor private static let cacheLimit = 6000
 
     @MainActor
-    static func attributed(_ source: String, theme: Theme) -> AttributedString {
+    public static func attributed(_ source: String, theme: Theme) -> AttributedString {
         let key = Key(source: source, isDark: theme.colorScheme == .dark, scale: theme.scale)
         if let hit = cache[key] { return hit }
 
@@ -44,7 +44,7 @@ enum InlineMarkdown {
     /// against this string are valid indices into the rendered `Text`'s
     /// `AttributedString`. Theme-independent, so the find index can be built
     /// off the main actor / without a `Theme` in hand.
-    nonisolated static func plainText(_ source: String) -> String {
+    nonisolated public static func plainText(_ source: String) -> String {
         String(parseInline(source).characters)
     }
 
@@ -90,7 +90,7 @@ enum InlineMarkdown {
 
     /// Drop the cache when the appearance flips so stale colors never show.
     @MainActor
-    static func invalidate() { cache.removeAll(keepingCapacity: true) }
+    public static func invalidate() { cache.removeAll(keepingCapacity: true) }
 
     @MainActor
     private static func style(_ attributed: inout AttributedString, theme: Theme) {

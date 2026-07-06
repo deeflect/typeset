@@ -1,5 +1,6 @@
 import MarcoCore
 import SwiftUI
+import MarcoRendering
 
 /// The J3 outline column: a native (floating-glass) `NavigationSplitView`
 /// leading sidebar listing the document's heading tree. The current section

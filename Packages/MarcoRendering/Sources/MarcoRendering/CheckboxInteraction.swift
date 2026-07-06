@@ -4,7 +4,7 @@ import SwiftUI
 /// task-list checkboxes are interactive without entering edit mode. Kept
 /// separate from `ImageBlockView`'s environment keys since this is purely
 /// an M3 editing concern.
-extension EnvironmentValues {
+public extension EnvironmentValues {
     /// The `Block.startLine` of the top-level list/blockquote block
     /// currently being rendered, so a `ListView` nested arbitrarily deep
     /// inside `StructuredChildView` recursion (a quote containing a list

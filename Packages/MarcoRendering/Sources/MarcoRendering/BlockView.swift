@@ -4,10 +4,14 @@ import SwiftUI
 /// Dispatches a parsed `Block` to the right typed view. One view per block
 /// kind, keyed by `block.id` in the enclosing `LazyVStack`, so live reload
 /// can reuse unchanged views.
-struct BlockView: View {
+public struct BlockView: View {
     let block: Block
 
-    var body: some View {
+    public init(block: Block) {
+        self.block = block
+    }
+
+    public var body: some View {
         // Publish this block's id so leaf text views (including ones nested in
         // list items / blockquotes) can form their ⌘F highlight key.
         content.environment(\.findBlockID, block.id)

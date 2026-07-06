@@ -13,8 +13,8 @@ import SwiftUI
 /// re-highlighting.
 /// `@unchecked Sendable`: all mutable state (`cache`, the engines) is only
 /// ever touched inside `queue`, so it's safe to share across tasks.
-final class CodeHighlighter: @unchecked Sendable {
-    static let shared = CodeHighlighter()
+public final class CodeHighlighter: @unchecked Sendable {
+    public static let shared = CodeHighlighter()
 
     private struct Key: Hashable {
         let codeHash: Int
@@ -32,7 +32,7 @@ final class CodeHighlighter: @unchecked Sendable {
 
     /// Highlights `code`, or returns `nil` when there's no usable language
     /// tag or highlighting fails — the caller then renders plain monospace.
-    func highlighted(code: String, language: String?, isDark: Bool) async -> AttributedString? {
+    public func highlighted(code: String, language: String?, isDark: Bool) async -> AttributedString? {
         guard let language, !language.isEmpty else { return nil }
         return await withCheckedContinuation { continuation in
             queue.async {
@@ -62,7 +62,7 @@ final class CodeHighlighter: @unchecked Sendable {
     /// Synchronous cache read — lets a view show highlighted code on its
     /// first frame when the result is already cached (and powers snapshot
     /// rendering, which can't await).
-    func cached(code: String, language: String?, isDark: Bool) -> AttributedString? {
+    public func cached(code: String, language: String?, isDark: Bool) -> AttributedString? {
         guard let language, !language.isEmpty else { return nil }
         let key = Key(codeHash: code.hashValue, language: language.lowercased(), isDark: isDark)
         return queue.sync { cache[key] }
@@ -70,7 +70,7 @@ final class CodeHighlighter: @unchecked Sendable {
 
     /// Synchronously compute and cache (used to pre-warm before a snapshot).
     @discardableResult
-    func warm(code: String, language: String?, isDark: Bool) -> AttributedString? {
+    public func warm(code: String, language: String?, isDark: Bool) -> AttributedString? {
         guard let language, !language.isEmpty else { return nil }
         return queue.sync {
             let key = Key(codeHash: code.hashValue, language: language.lowercased(), isDark: isDark)

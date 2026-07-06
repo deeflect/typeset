@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import MarcoCore
+import MarcoRendering
 
 /// Headless ⌘F perf verification, mirroring `SnapshotRunner`'s pattern.
 /// Measures the three costs that gate find responsiveness on a large file:

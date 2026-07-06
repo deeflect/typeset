@@ -1,6 +1,7 @@
 import AppKit
 import MarcoCore
 import SwiftUI
+import MarcoRendering
 
 /// Converts the rendered document to `NSAttributedString`, reusing
 /// `Theme`'s fonts/colors and `InlineMarkdown`'s inline styling (bold /

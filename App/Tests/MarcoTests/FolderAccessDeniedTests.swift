@@ -1,3 +1,4 @@
+import MarcoRendering
 import XCTest
 @testable import Marco
 

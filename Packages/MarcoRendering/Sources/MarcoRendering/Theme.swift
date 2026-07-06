@@ -8,10 +8,19 @@ import SwiftUI
 /// Apple's semantic system colors (label / secondaryLabel / textBackground)
 /// for a native, auto-adapting base, with a few hand-tuned tints layered on
 /// top for code, quotes, and tables.
-struct Theme: Equatable {
-    var colorScheme: ColorScheme
+///
+/// Public: shared by the app and the Quick Look extension (and the app's
+/// export/print/snapshot paths), which each construct their own `Theme`
+/// value and pass it through the environment.
+public struct Theme: Equatable {
+    public var colorScheme: ColorScheme
     /// App-wide text-size multiplier (⌘+/⌘−/⌘0), persisted via AppStorage.
-    var scale: CGFloat
+    public var scale: CGFloat
+
+    public init(colorScheme: ColorScheme, scale: CGFloat) {
+        self.colorScheme = colorScheme
+        self.scale = scale
+    }
 
     private var isDark: Bool { colorScheme == .dark }
 
@@ -19,61 +28,61 @@ struct Theme: Equatable {
 
     /// Reading measure cap (~70ch at body size). Prose is centered within
     /// this; code and table cards may fill it edge to edge.
-    var contentMaxWidth: CGFloat { 720 }
-    var contentHorizontalPadding: CGFloat { 48 }
-    var contentTopPadding: CGFloat { 40 }
-    var contentBottomPadding: CGFloat { 160 }
+    public var contentMaxWidth: CGFloat { 720 }
+    public var contentHorizontalPadding: CGFloat { 48 }
+    public var contentTopPadding: CGFloat { 40 }
+    public var contentBottomPadding: CGFloat { 160 }
 
     // MARK: - Semantic colors
 
-    var background: Color { Color(nsColor: .textBackgroundColor) }
-    var textPrimary: Color { Color(nsColor: .labelColor) }
-    var textSecondary: Color { Color(nsColor: .secondaryLabelColor) }
-    var textTertiary: Color { Color(nsColor: .tertiaryLabelColor) }
-    var accent: Color { Color.accentColor }
+    public var background: Color { Color(nsColor: .textBackgroundColor) }
+    public var textPrimary: Color { Color(nsColor: .labelColor) }
+    public var textSecondary: Color { Color(nsColor: .secondaryLabelColor) }
+    public var textTertiary: Color { Color(nsColor: .tertiaryLabelColor) }
+    public var accent: Color { Color.accentColor }
 
     // MARK: - Surface tints (hand-tuned per appearance)
 
-    var codeCardFill: Color {
+    public var codeCardFill: Color {
         isDark ? Color(red: 0.13, green: 0.13, blue: 0.145)
                : Color(red: 0.968, green: 0.968, blue: 0.972)
     }
-    var codeCardStroke: Color {
+    public var codeCardStroke: Color {
         isDark ? Color.white.opacity(0.08) : Color.black.opacity(0.07)
     }
-    var inlineCodeFill: Color {
+    public var inlineCodeFill: Color {
         isDark ? accent.opacity(0.20) : accent.opacity(0.11)
     }
-    var inlineCodeText: Color {
+    public var inlineCodeText: Color {
         isDark ? Color(red: 0.86, green: 0.90, blue: 1.0) : textPrimary
     }
 
-    var quoteBar: Color { accent.opacity(isDark ? 0.85 : 0.75) }
-    var quoteText: Color { textSecondary }
-    var quoteFill: Color { accent.opacity(isDark ? 0.06 : 0.045) }
+    public var quoteBar: Color { accent.opacity(isDark ? 0.85 : 0.75) }
+    public var quoteText: Color { textSecondary }
+    public var quoteFill: Color { accent.opacity(isDark ? 0.06 : 0.045) }
 
-    var tableStroke: Color {
+    public var tableStroke: Color {
         isDark ? Color.white.opacity(0.10) : Color.black.opacity(0.09)
     }
-    var tableHeaderFill: Color {
+    public var tableHeaderFill: Color {
         isDark ? Color.white.opacity(0.05) : Color.black.opacity(0.035)
     }
-    var tableRowHoverFill: Color {
+    public var tableRowHoverFill: Color {
         isDark ? Color.white.opacity(0.04) : Color.black.opacity(0.025)
     }
 
-    var chipFill: Color {
+    public var chipFill: Color {
         isDark ? Color.white.opacity(0.06) : Color.black.opacity(0.04)
     }
-    var chipStroke: Color {
+    public var chipStroke: Color {
         isDark ? Color.white.opacity(0.09) : Color.black.opacity(0.08)
     }
 
-    var thematicBreak: Color {
+    public var thematicBreak: Color {
         isDark ? Color.white.opacity(0.22) : Color.black.opacity(0.20)
     }
 
-    var linkColor: Color { accent }
+    public var linkColor: Color { accent }
 
     // MARK: - Find highlights (⌘F)
 
@@ -81,53 +90,53 @@ struct Theme: Equatable {
     /// find-highlight idiom, tuned for each appearance so it reads on both
     /// paper-white and near-black without fighting the accent color used for
     /// links and the change-pulse.
-    var findMatchHighlight: Color {
+    public var findMatchHighlight: Color {
         isDark ? Color(red: 0.62, green: 0.50, blue: 0.10).opacity(0.55)
                : Color(red: 1.0, green: 0.86, blue: 0.30).opacity(0.75)
     }
     /// Stronger tint on the *current* match (⌘G steps between them), so the
     /// active hit stands out from the rest of the field at a glance.
-    var findCurrentHighlight: Color {
+    public var findCurrentHighlight: Color {
         isDark ? Color(red: 0.95, green: 0.66, blue: 0.12).opacity(0.85)
                : Color(red: 1.0, green: 0.62, blue: 0.0).opacity(0.85)
     }
     /// Foreground forced on the current match so text stays legible against
     /// the saturated current-highlight fill in dark mode.
-    var findCurrentText: Color {
+    public var findCurrentText: Color {
         isDark ? Color.black.opacity(0.92) : textPrimary
     }
 
     // MARK: - Spacing scale
 
-    func scaled(_ value: CGFloat) -> CGFloat { value * scale }
+    public func scaled(_ value: CGFloat) -> CGFloat { value * scale }
 
     // MARK: - Fonts
 
-    var bodySize: CGFloat { 15 }
-    var bodyLineSpacing: CGFloat { scaled(6.5) }
+    public var bodySize: CGFloat { 15 }
+    public var bodyLineSpacing: CGFloat { scaled(6.5) }
 
-    var bodyFont: Font { .system(size: bodySize * scale, weight: .regular) }
+    public var bodyFont: Font { .system(size: bodySize * scale, weight: .regular) }
     /// Monospaced font for code, sized relative to a given point size so it
     /// visually matches the surrounding text (SF Mono runs a touch large).
-    func monoFont(_ size: CGFloat) -> Font {
+    public func monoFont(_ size: CGFloat) -> Font {
         .system(size: size * scale, weight: .regular, design: .monospaced)
     }
-    var codeBlockFont: Font { monoFont(13) }
-    var inlineCodeSize: CGFloat { bodySize * 0.94 }
+    public var codeBlockFont: Font { monoFont(13) }
+    public var inlineCodeSize: CGFloat { bodySize * 0.94 }
 
     // MARK: - Heading ramp
 
-    struct HeadingStyle {
-        var font: Font
-        var color: Color
-        var lineSpacing: CGFloat
-        var spacingAbove: CGFloat
-        var spacingBelow: CGFloat
-        var tracking: CGFloat
-        var uppercase: Bool
+    public struct HeadingStyle {
+        public var font: Font
+        public var color: Color
+        public var lineSpacing: CGFloat
+        public var spacingAbove: CGFloat
+        public var spacingBelow: CGFloat
+        public var tracking: CGFloat
+        public var uppercase: Bool
     }
 
-    func heading(level: Int) -> HeadingStyle {
+    public func heading(level: Int) -> HeadingStyle {
         switch level {
         case 1:
             return HeadingStyle(
@@ -169,6 +178,6 @@ struct Theme: Equatable {
     }
 }
 
-extension EnvironmentValues {
+public extension EnvironmentValues {
     @Entry var theme: Theme = Theme(colorScheme: .light, scale: 1)
 }

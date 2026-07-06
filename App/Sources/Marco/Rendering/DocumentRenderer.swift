@@ -1,6 +1,7 @@
 import AppKit
 import MarcoCore
 import SwiftUI
+import MarcoRendering
 
 /// The reading surface: a `LazyVStack` of per-block views inside a
 /// `ScrollView`, keyed by `block.id` so virtualization holds on large

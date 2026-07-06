@@ -5,12 +5,18 @@ import SwiftUI
 /// fill + hairline stroke, SF Mono, horizontal scroll contained *inside*
 /// the card, and a language label plus copy button that materialize on
 /// hover. Syntax highlighting is computed off-main and cached.
-struct CodeBlockView: View {
+public struct CodeBlockView: View {
     let raw: String
     let language: String?
     /// `StructuredChild.id` when nested in a list/quote; `nil` at top level.
     /// Part of its ⌘F highlight key.
     var childID: Int? = nil
+
+    public init(raw: String, language: String?, childID: Int? = nil) {
+        self.raw = raw
+        self.language = language
+        self.childID = childID
+    }
     @Environment(\.theme) private var theme
     @Environment(\.isSnapshot) private var isSnapshot
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -24,7 +30,7 @@ struct CodeBlockView: View {
 
     private var code: String { CodeBlockView.extractCode(raw) }
 
-    var body: some View {
+    public var body: some View {
         let initial = highlighted
             ?? CodeHighlighter.shared.cached(code: code, language: language, isDark: theme.colorScheme == .dark)
         let base: AttributedString = initial ?? AttributedString(code)
@@ -133,7 +139,7 @@ struct CodeBlockView: View {
     /// Strips fence lines (``` / ~~~) or dedents an indented code block.
     /// `nonisolated`: a pure string transform (used by the find-segment
     /// builder and snapshot pre-warm off the main actor as well as here).
-    nonisolated static func extractCode(_ raw: String) -> String {
+    nonisolated public static func extractCode(_ raw: String) -> String {
         var lines = raw.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         guard let first = lines.first else { return raw }
         let trimmedFirst = first.trimmingCharacters(in: .whitespaces)
