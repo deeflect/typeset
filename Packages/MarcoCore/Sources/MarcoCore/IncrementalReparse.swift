@@ -152,7 +152,7 @@ extension MarkdownParser {
                 let marginOld = oldBodyBlocks[kMin..<kExt]
                 guard reparsed.count >= marginOld.count else { continue }
                 let tail = reparsed.suffix(marginOld.count)
-                let verified = zip(tail, marginOld).allSatisfy { $0.contentHash == $1.contentHash && $0.kind == $1.kind }
+                let verified = zip(tail, marginOld).allSatisfy { $0.digest == $1.digest && $0.kind == $1.kind }
                 guard verified else { continue }
                 finalReplacement = Array(reparsed.dropLast(marginOld.count))
                 effectiveK = kMin
@@ -196,7 +196,7 @@ extension MarkdownParser {
                 Block(
                     kind: block.kind,
                     rawText: block.rawText,
-                    contentHash: block.contentHash,
+                    digest: block.digest,
                     ordinal: block.ordinal + ordinalDelta,
                     startLine: block.startLine + lineDelta
                 )
