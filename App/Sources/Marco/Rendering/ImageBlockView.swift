@@ -78,6 +78,9 @@ struct ImageBlockView: View {
                     .onTapGesture { presentLightbox?(displayImage) }
                     .onDrag { dragProvider(for: displayImage) }
                     .help(presentLightbox == nil ? "" : "Click to zoom")
+                    .accessibilityElement()
+                    .accessibilityLabel(alt.isEmpty ? "Image" : alt)
+                    .accessibilityAddTraits(presentLightbox == nil ? .isImage : [.isImage, .isButton])
             } else if failure != nil || isSnapshot {
                 placeholder
             } else {
