@@ -12,17 +12,29 @@ struct BlockView: View {
         case .frontmatter:
             FrontmatterView(raw: block.rawText)
         case .heading(let level):
-            HeadingView(level: level, raw: block.rawText)
+            HeadingView(level: level, text: BlockStructureCache.shared.headingText(for: block))
         case .paragraph:
             ParagraphView(raw: block.rawText)
         case .codeBlock(let language):
             CodeBlockView(raw: block.rawText, language: language)
         case .list:
-            ListView(raw: block.rawText)
+            if let model = BlockStructureCache.shared.list(for: block) {
+                ListView(model: model)
+            } else {
+                RawFallbackView(raw: block.rawText)
+            }
         case .table:
-            TableBlockView(raw: block.rawText)
+            if let model = BlockStructureCache.shared.table(for: block) {
+                TableBlockView(model: model)
+            } else {
+                RawFallbackView(raw: block.rawText)
+            }
         case .blockquote:
-            BlockquoteView(raw: block.rawText)
+            if let model = BlockStructureCache.shared.quote(for: block) {
+                BlockquoteView(model: model)
+            } else {
+                RawFallbackView(raw: block.rawText)
+            }
         case .thematicBreak:
             ThematicBreakView()
         case .htmlBlock:
@@ -35,12 +47,12 @@ struct BlockView: View {
 
 struct HeadingView: View {
     let level: Int
-    let raw: String
+    let text: String
     @Environment(\.theme) private var theme
 
     var body: some View {
         let style = theme.heading(level: level)
-        Text(InlineMarkdown.attributed(BlockParsing.headingText(raw), theme: theme))
+        Text(InlineMarkdown.attributed(text, theme: theme))
             .font(style.font)
             .foregroundStyle(style.color)
             .tracking(style.tracking)
@@ -57,6 +69,10 @@ struct HeadingView: View {
 
 struct ParagraphView: View {
     let raw: String
+    /// Overrides the text color (e.g. a completed task item, or muted
+    /// blockquote prose) when this paragraph is rendered nested inside a
+    /// list item or blockquote. `nil` keeps the default `textPrimary`.
+    var textColor: Color? = nil
     @Environment(\.theme) private var theme
 
     var body: some View {
@@ -66,8 +82,9 @@ struct ParagraphView: View {
         } else {
             Text(InlineMarkdown.attributed(raw, theme: theme))
                 .font(theme.bodyFont)
-                .foregroundStyle(theme.textPrimary)
+                .foregroundStyle(textColor ?? theme.textPrimary)
                 .lineSpacing(theme.bodyLineSpacing)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, theme.scaled(7))
                 .textSelection(.enabled)
@@ -86,6 +103,21 @@ struct ThematicBreakView: View {
             .frame(width: 220, height: 1.5)
             .frame(maxWidth: .infinity, alignment: .center)
             .padding(.vertical, theme.scaled(28))
+    }
+}
+
+// MARK: - Raw fallback (defensive: a list/table/quote block whose text
+// couldn't be re-parsed into a structured model)
+
+struct RawFallbackView: View {
+    let raw: String
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Text(raw)
+            .font(theme.monoFont(12))
+            .foregroundStyle(theme.textTertiary)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
