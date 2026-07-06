@@ -94,6 +94,8 @@ final class WindowModel {
         }
         self.controller = controller
         controller.start()
+        // Remember this document for the empty-state home screen (PLAN §6).
+        RecentDocumentsStore.shared.record(url)
 
         if find.isActive {
             find.rebuildSegments(from: controller.blocks)

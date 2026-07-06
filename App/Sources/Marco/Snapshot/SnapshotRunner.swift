@@ -30,6 +30,19 @@ enum SnapshotRunner {
         let variant = env["MARCO_SNAPSHOT_VARIANT"] ?? "reading"
         let findQuery = env["MARCO_SNAPSHOT_FIND"] ?? ""
         let url = URL(fileURLWithPath: filePath)
+
+        #if DEBUG
+        // The empty-state home screen has no document — seed a few recents so
+        // the list renders, and capture the opaque (Reduce Transparency)
+        // surface since ImageRenderer can't rasterize the live glass backdrop.
+        if variant == "empty" {
+            RecentDocumentsStore.shared.seedForSnapshot([
+                url,
+                url.deletingLastPathComponent().appendingPathComponent("CLAUDE.md"),
+                url.deletingLastPathComponent().appendingPathComponent("docs/architecture.md")
+            ])
+        }
+        #endif
         let text = (try? String(contentsOf: url, encoding: .utf8)) ?? "# Could not read file\n\n`\(filePath)`"
         let blocks = MarkdownParser.parse(text)
         let base = url.deletingPathExtension().lastPathComponent
@@ -68,6 +81,9 @@ enum SnapshotRunner {
             SnapshotSidebarScene(blocks: blocks, documentURL: url)
         case "find":
             SnapshotFindScene(blocks: blocks, documentURL: url, query: findQuery)
+        case "empty":
+            EmptyStateView(forceOpaque: true)
+                .frame(width: 760, height: 640)
         default:
             SnapshotColumn(blocks: blocks, documentURL: url)
         }
