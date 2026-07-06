@@ -1,11 +1,14 @@
+import MarcoCore
 import SwiftUI
 
 /// Renders a GFM table as a bordered card: emphasized header row, hairline
 /// row separators, hover highlight on body rows. When the table is wider
 /// than the reading column it scrolls horizontally *inside* the card;
-/// otherwise its columns share the available width.
+/// otherwise its columns share the available width. `model` comes from
+/// `BlockStructure`'s AST walk, so a cell containing a pipe inside a code
+/// span (`` `a|b` ``) is split correctly instead of on every raw `|`.
 struct TableBlockView: View {
-    let raw: String
+    let model: TableModel
     @Environment(\.theme) private var theme
     @Environment(\.isSnapshot) private var isSnapshot
     @State private var availableWidth: CGFloat = 0
@@ -14,18 +17,12 @@ struct TableBlockView: View {
     private let minColumnWidth: CGFloat = 116
 
     var body: some View {
-        if let model = BlockParsing.table(raw) {
-            card(for: model)
-                .padding(.vertical, theme.scaled(10))
-        } else {
-            Text(raw)
-                .font(theme.monoFont(12))
-                .foregroundStyle(theme.textTertiary)
-        }
+        card(for: model)
+            .padding(.vertical, theme.scaled(10))
     }
 
     @ViewBuilder
-    private func card(for model: BlockParsing.TableModel) -> some View {
+    private func card(for model: TableModel) -> some View {
         let columns = model.header.count
         let colWidth = minColumnWidth * theme.scale
         // In snapshots (no live scroll capture) always lay columns out to
@@ -64,7 +61,7 @@ struct TableBlockView: View {
     }
 
     private func row(_ cells: [String], isHeader: Bool, rowIndex: Int,
-                     alignments: [BlockParsing.ColumnAlignment], fits: Bool, colWidth: CGFloat) -> some View {
+                     alignments: [TableModel.Alignment], fits: Bool, colWidth: CGFloat) -> some View {
         HStack(spacing: 0) {
             ForEach(cells.indices, id: \.self) { c in
                 let alignment = c < alignments.count ? alignments[c] : .leading
@@ -93,7 +90,7 @@ struct TableBlockView: View {
         return hoveredRow == rowIndex ? theme.tableRowHoverFill : Color.clear
     }
 
-    private func frameAlignment(_ a: BlockParsing.ColumnAlignment) -> Alignment {
+    private func frameAlignment(_ a: TableModel.Alignment) -> Alignment {
         switch a {
         case .leading: return .leading
         case .center: return .center
@@ -101,7 +98,7 @@ struct TableBlockView: View {
         }
     }
 
-    private func textAlignment(_ a: BlockParsing.ColumnAlignment) -> TextAlignment {
+    private func textAlignment(_ a: TableModel.Alignment) -> TextAlignment {
         switch a {
         case .leading: return .leading
         case .center: return .center
