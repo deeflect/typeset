@@ -66,6 +66,13 @@ struct HeadingView: View {
 
     var body: some View {
         let style = theme.heading(level: level)
+        // A heading nested inside a list item or blockquote (childID != nil)
+        // gets compact vertical spacing — the container already supplies its
+        // own rhythm, so the top-level heading ramp's generous margins would
+        // otherwise blow the card open (e.g. an H2 heading inside a quote).
+        let isNested = childID != nil
+        let topPad = isNested ? min(style.spacingAbove, theme.scaled(4)) : style.spacingAbove
+        let bottomPad = isNested ? min(style.spacingBelow, theme.scaled(4)) : style.spacingBelow
         let attributed = applyingFindHighlight(
             InlineMarkdown.attributed(text, theme: theme),
             context: findHighlight, blockID: findBlockID, childID: childID, theme: theme)
@@ -76,8 +83,8 @@ struct HeadingView: View {
             .lineSpacing(style.lineSpacing)
             .textCase(style.uppercase ? .uppercase : nil)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, style.spacingAbove)
-            .padding(.bottom, style.spacingBelow)
+            .padding(.top, topPad)
+            .padding(.bottom, bottomPad)
             .textSelection(.enabled)
             // VoiceOver reads the document as a structured outline: each
             // heading is announced as a heading at its real level, so
