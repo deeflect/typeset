@@ -1,0 +1,73 @@
+name: Marco
+options:
+  bundleIdPrefix: com.dee.marco.draft
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+
+configFiles:
+  Debug: Config/App.xcconfig
+  Release: Config/App.xcconfig
+
+packages:
+  MarcoCore:
+    path: Packages/MarcoCore
+  swift-markdown:
+    url: https://github.com/apple/swift-markdown.git
+    from: 0.6.0
+
+targets:
+  Marco:
+    type: application
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: App/Sources/Marco
+    dependencies:
+      - package: MarcoCore
+    settings:
+      base:
+        PRODUCT_NAME: $(APP_NAME)
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID)
+        MARKETING_VERSION: $(MARKETING_VERSION)
+        ENABLE_PREVIEWS: YES
+        SWIFT_EMIT_LOC_STRINGS: YES
+    info:
+      path: App/Sources/Marco/Info.plist
+      properties:
+        CFBundleDisplayName: $(APP_NAME)
+        CFBundleName: $(APP_NAME)
+        NSPrincipalClass: NSApplication
+        NSHumanReadableCopyright: ""
+        LSApplicationCategoryType: public.app-category.productivity
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Markdown Document
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - net.daringfireball.markdown
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: net.daringfireball.markdown
+            UTTypeDescription: Markdown Document
+            UTTypeConformsTo:
+              - public.plain-text
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - md
+                - markdown
+                - mdown
+    entitlements:
+      path: App/Sources/Marco/Marco.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.files.user-selected.read-write: true
+    scheme:
+      gatherCoverageData: false
+
+schemes:
+  Marco:
+    build:
+      targets:
+        Marco: all
+    run:
+      config: Debug

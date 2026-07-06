@@ -1,0 +1,19 @@
+# XcodeGen-generated project (checked-in source of truth is project.yml)
+*.xcodeproj
+*.xcworkspace
+
+# Xcode
+xcuserdata/
+DerivedData/
+*.xcuserstate
+*.xcscmblueprint
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Large synthetic fixtures (regenerate with Scripts/make-fixtures.sh)
+Tests/Fixtures/generated/
+
+# macOS
+.DS_Store

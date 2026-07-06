@@ -1,0 +1,14 @@
+// Single source of truth for renaming the app.
+// To rename: edit these three values (and optionally find/replace the
+// "Marco" module prefix in source — see README.md).
+
+APP_NAME = Marco
+APP_BUNDLE_ID = com.dee.marco.draft
+MARKETING_VERSION = 0.1.0
+
+CURRENT_PROJECT_VERSION = 1
+SWIFT_VERSION = 6.0
+MACOSX_DEPLOYMENT_TARGET = 26.0
+DEVELOPMENT_TEAM =
+CODE_SIGN_STYLE = Automatic
+ENABLE_HARDENED_RUNTIME = YES
