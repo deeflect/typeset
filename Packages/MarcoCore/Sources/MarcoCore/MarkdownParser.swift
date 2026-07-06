@@ -23,9 +23,15 @@ public enum MarkdownParser {
         // default — no extra options needed.
         let document = Document(parsing: body)
 
+        // Split once and reuse for every block: `sourceText` used to
+        // re-split `body` per block, which is O(n) per call and thus
+        // O(n * blockCount) overall — effectively quadratic and, per the
+        // Spike A perf spike, ~3.5 *minutes* to parse a 1 MB fixture.
+        let bodyLines = body.split(separator: "\n", omittingEmptySubsequences: false)
+
         for child in document.children {
             let kind = blockKind(for: child)
-            let rawText = sourceText(for: child, fallback: body)
+            let rawText = sourceText(for: child, lines: bodyLines, fallback: body)
             blocks.append(Block(kind: kind, rawText: rawText, ordinal: ordinal))
             ordinal += 1
         }
@@ -84,11 +90,10 @@ public enum MarkdownParser {
     /// (relative to the parsed `body`); slice the original text so the
     /// block's `rawText` is exactly what cmark saw, not a re-serialized
     /// approximation.
-    private static func sourceText(for markup: any Markup, fallback body: String) -> String {
+    private static func sourceText(for markup: any Markup, lines: [Substring], fallback body: String) -> String {
         guard let range = markup.range else {
             return markup.format()
         }
-        let lines = body.split(separator: "\n", omittingEmptySubsequences: false)
         let startLine = range.lowerBound.line - 1
         let endLine = range.upperBound.line - 1
         guard startLine >= 0, endLine < lines.count, startLine <= endLine else {
