@@ -75,5 +75,46 @@ enum TextKitReadingSnapshotRunner {
             FileHandle.standardError.write(Data("tk-snapshot: wrote \(path) (\(Int(width))x\(Int(height)))\n".utf8))
         }
     }
+
+    /// Selection/copy verification for the concealment mechanism (M6-PLAN §8
+    /// risk 5). Concealment is by zero-advance attributes, so display length ==
+    /// store length and the backing characters are the raw source; this probe
+    /// builds a real read-only `NSTextView`, selects all, copies, and asserts
+    /// the pasteboard string equals the raw source — i.e. ⌘A + ⌘C yields
+    /// SOURCE, with selection length == store length. Prints the result to
+    /// stderr.
+    static func copyProbe(text: String, blocks: [Block], theme: Theme, baseURL: URL?) {
+        let contentStorage = NSTextContentStorage()
+        let storage = NSTextStorage()
+        contentStorage.textStorage = storage
+        let layoutManager = NSTextLayoutManager()
+        contentStorage.addTextLayoutManager(layoutManager)
+        let container = NSTextContainer(size: CGSize(width: MarcoReadingMetrics.contentMaxWidth, height: 1_000_000))
+        layoutManager.textContainer = container
+
+        let built = TextKitReadingStyler.build(text: text, blocks: blocks, theme: theme, baseURL: baseURL)
+        storage.setAttributedString(built.storage)
+
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: MarcoReadingMetrics.contentMaxWidth, height: 800),
+                                  textContainer: container)
+        textView.isEditable = false
+        textView.isSelectable = true
+        layoutManager.ensureLayout(for: contentStorage.documentRange)
+
+        textView.selectAll(nil)
+        let selLen = textView.selectedRange().length
+        NSPasteboard.general.clearContents()
+        textView.copy(nil)
+        let pasted = NSPasteboard.general.string(forType: .string) ?? ""
+
+        let source = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        let matchesSource = pasted == source
+        let msg = "tk-copy-probe: storeLen=\(storage.length) selectionLen=\(selLen) copy==source? \(matchesSource) pastedLen=\(pasted.count)\n"
+        FileHandle.standardError.write(Data(msg.utf8))
+        if !matchesSource {
+            let prefix = String(pasted.prefix(80)).replacingOccurrences(of: "\n", with: "\\n")
+            FileHandle.standardError.write(Data("tk-copy-probe: pasted-prefix=\"\(prefix)\"\n".utf8))
+        }
+    }
 }
 #endif

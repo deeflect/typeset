@@ -55,6 +55,8 @@ enum SnapshotRunner {
         // M6 Phase 1 slice 1: render the TextKit 2 reading surface instead of
         // the shipping SwiftUI renderer, reusing this proven headless path.
         if variant == "textkit" {
+            TextKitReadingSnapshotRunner.copyProbe(
+                text: text, blocks: blocks, theme: Theme(colorScheme: .light, scale: CGFloat(scale)), baseURL: url)
             for scheme in [ColorScheme.light, ColorScheme.dark] {
                 let theme = Theme(colorScheme: scheme, scale: CGFloat(scale))
                 let suffix = scheme == .dark ? "dark" : "light"

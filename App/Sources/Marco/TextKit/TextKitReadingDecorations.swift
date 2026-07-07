@@ -22,6 +22,17 @@ extension NSAttributedString.Key {
     /// on click. Kept off `.link` so TextKit's default blue/underline link
     /// decoration never lands on a code chip.
     static let marcoCopyText = NSAttributedString.Key("marco.reading.copyText")
+    /// Present on an inline-code run. Value: `NSNumber(true)`. The fragment
+    /// draws a rounded, outset chip behind the run (one strip per line) instead
+    /// of a flat `.backgroundColor` span, matching the shipping `InlineCodeChip`.
+    static let marcoInlineChip = NSAttributedString.Key("marco.reading.inlineChip")
+    /// Present on a thematic-break line (its `---` text concealed). Value:
+    /// `NSNumber(true)`. The fragment draws a centered hairline rule.
+    static let marcoThematicBreak = NSAttributedString.Key("marco.reading.thematicBreak")
+    /// Present at the first character of an unordered-list line whose marker
+    /// was concealed. Value: `NSNumber` — the bullet's x offset (points, from
+    /// the content edge). The fragment draws a bullet dot there.
+    static let marcoListBullet = NSAttributedString.Key("marco.reading.listBullet")
 }
 
 /// Which corners/edges of the continuous code card this line paints. A fenced
@@ -59,12 +70,25 @@ struct ReadingDecorationPalette {
     let codeCardStroke: NSColor
     let quoteBar: NSColor
     let imageStroke: NSColor
+    let inlineCodeFill: NSColor
+    let ruleColor: NSColor
+    let bulletColor: NSColor
+    /// Chip geometry, scaled to match the shipping `InlineCodeChipRenderer`.
+    let chipRadius: CGFloat
+    let chipHOutset: CGFloat
+    let chipVOutset: CGFloat
 
     init(theme: Theme) {
         codeCardFill = NSColor(theme.codeCardFill)
         codeCardStroke = NSColor(theme.codeCardStroke)
         quoteBar = NSColor(theme.quoteBar)
         imageStroke = NSColor(theme.codeCardStroke)
+        inlineCodeFill = NSColor(theme.inlineCodeFill)
+        ruleColor = NSColor(theme.codeCardStroke)
+        bulletColor = NSColor(theme.textSecondary)
+        chipRadius = theme.scaled(4)
+        chipHOutset = theme.scaled(3.5)
+        chipVOutset = theme.scaled(1.5)
     }
 }
 
@@ -186,7 +210,17 @@ final class MarcoReadingLayoutFragment: NSTextLayoutFragment {
         if let depth = (attrs?[.marcoQuoteDepth] as? NSNumber)?.intValue, depth >= 1 {
             drawQuoteBars(depth: depth, textFrame: textFrame, in: context)
         }
+        if attrs?[.marcoThematicBreak] != nil {
+            drawThematicRule(textFrame: textFrame, in: context)
+        }
+        if let x = (attrs?[.marcoListBullet] as? NSNumber)?.doubleValue {
+            drawListBullet(xOffset: CGFloat(x), textFrame: textFrame, in: context)
+        }
         context.restoreGState()
+
+        // Inline-code chips sit behind the glyphs but in front of any block
+        // fill (a code chip inside a quote reads on top of the quote indent).
+        drawInlineChips(at: renderPoint, in: context)
 
         // Glyphs.
         super.draw(at: renderPoint, in: context)
@@ -265,6 +299,73 @@ final class MarcoReadingLayoutFragment: NSTextLayoutFragment {
                     tangent2End: CGPoint(x: rect.minX + tl, y: rect.minY), radius: tl)
         path.closeSubpath()
         return path
+    }
+
+    /// One rounded, outset chip per line fragment behind each `.marcoInlineChip`
+    /// run — the fix for the ragged flat per-line strips (complaint #2). Merges
+    /// nothing across lines: a span that wraps yields one clean rounded strip
+    /// per line, exactly like the shipping `InlineCodeChipRenderer`.
+    private func drawInlineChips(at renderPoint: CGPoint, in context: CGContext) {
+        guard let paragraph = textElement as? NSTextParagraph else { return }
+        let attr = paragraph.attributedString
+        guard attr.length > 0 else { return }
+        var chipRanges: [NSRange] = []
+        attr.enumerateAttribute(.marcoInlineChip, in: NSRange(location: 0, length: attr.length)) { value, range, _ in
+            if value != nil { chipRanges.append(range) }
+        }
+        guard !chipRanges.isEmpty else { return }
+
+        context.saveGState()
+        context.translateBy(x: renderPoint.x, y: renderPoint.y)
+        context.setFillColor(palette.inlineCodeFill.cgColor)
+        for line in textLineFragments {
+            let lineRange = line.characterRange
+            let bounds = line.typographicBounds
+            for chip in chipRanges {
+                let inter = NSIntersectionRange(lineRange, chip)
+                guard inter.length > 0 else { continue }
+                // `locationForCharacter(at:)` and `characterRange` are both in
+                // element-relative coordinates — pass the intersection bounds
+                // directly (subtracting the line origin mislocates chips on
+                // wrapped lines).
+                let x0 = line.locationForCharacter(at: inter.location).x
+                let x1 = line.locationForCharacter(at: inter.location + inter.length).x
+                let rect = CGRect(x: bounds.minX + min(x0, x1), y: bounds.minY,
+                                  width: abs(x1 - x0), height: bounds.height)
+                    .insetBy(dx: -palette.chipHOutset, dy: -palette.chipVOutset)
+                context.addPath(CGPath(roundedRect: rect, cornerWidth: palette.chipRadius,
+                                       cornerHeight: palette.chipRadius, transform: nil))
+                context.fillPath()
+            }
+        }
+        context.restoreGState()
+    }
+
+    /// A bullet dot in the list gutter, vertically centered on the item's
+    /// first line (the concealed `- ` marker leaves no glyph of its own).
+    private func drawListBullet(xOffset: CGFloat, textFrame: CGRect, in context: CGContext) {
+        let firstLineHeight = textLineFragments.first?.typographicBounds.height ?? textFrame.height
+        let radius: CGFloat = 2.2
+        let cx = contentInset + xOffset + MarcoReadingMetrics.listHang / 2
+        let cy = textFrame.minY + firstLineHeight / 2
+        let rect = CGRect(x: cx - radius, y: cy - radius, width: radius * 2, height: radius * 2)
+        context.saveGState()
+        context.setFillColor(palette.bulletColor.cgColor)
+        context.fillEllipse(in: rect)
+        context.restoreGState()
+    }
+
+    private func drawThematicRule(textFrame: CGRect, in context: CGContext) {
+        let containerWidth = columnWidth > 0 ? columnWidth : textFrame.width
+        let width = max(0, containerWidth - contentInset * 2)
+        let y = textFrame.midY
+        context.saveGState()
+        context.setStrokeColor(palette.ruleColor.cgColor)
+        context.setLineWidth(1)
+        context.move(to: CGPoint(x: contentInset, y: y))
+        context.addLine(to: CGPoint(x: contentInset + width, y: y))
+        context.strokePath()
+        context.restoreGState()
     }
 
     private func drawQuoteBars(depth: Int, textFrame: CGRect, in context: CGContext) {
