@@ -83,16 +83,14 @@ struct HeadingView: View {
                 InlineMarkdown.attributed(text, theme: theme),
                 context: findHighlight, blockID: findBlockID, childID: childID, theme: theme),
             flashURL: copyFeedback?.flashURL, theme: theme)
-        Text(attributed)
-            .font(style.font)
+        InlineCodeText(
+            attributed: attributed, theme: theme, font: style.font,
+            tracking: style.tracking, lineSpacing: style.lineSpacing,
+            uppercase: style.uppercase)
             .foregroundStyle(style.color)
-            .tracking(style.tracking)
-            .lineSpacing(style.lineSpacing)
-            .textCase(style.uppercase ? .uppercase : nil)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, topPad)
             .padding(.bottom, bottomPad)
-            .textSelection(.enabled)
             // VoiceOver reads the document as a structured outline: each
             // heading is announced as a heading at its real level, so
             // rotor "Headings" navigation and level nesting work (PLAN §6).
@@ -138,14 +136,13 @@ struct ParagraphView: View {
                     InlineMarkdown.attributed(raw, theme: theme),
                     context: findHighlight, blockID: findBlockID, childID: childID, theme: theme),
                 flashURL: copyFeedback?.flashURL, theme: theme)
-            Text(attributed)
-                .font(theme.bodyFont)
+            InlineCodeText(
+                attributed: attributed, theme: theme, font: theme.bodyFont,
+                lineSpacing: theme.bodyLineSpacing)
                 .foregroundStyle(textColor ?? theme.textPrimary)
-                .lineSpacing(theme.bodyLineSpacing)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, theme.scaled(7))
-                .textSelection(.enabled)
         }
     }
 }

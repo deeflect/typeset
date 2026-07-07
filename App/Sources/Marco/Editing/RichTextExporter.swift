@@ -217,11 +217,16 @@ enum RichTextExporter {
 
             var font = baseFont
             var traits: NSFontTraitMask = []
+            var codeBackground = false
             if let intent = run.inlinePresentationIntent {
                 if intent.contains(.stronglyEmphasized) { traits.insert(.boldFontMask) }
                 if intent.contains(.emphasized) { traits.insert(.italicFontMask) }
                 if intent.contains(.code) {
                     font = NSFont.monospacedSystemFont(ofSize: theme.inlineCodeSize, weight: .regular)
+                    // Inline code no longer carries a `backgroundColor` (the
+                    // reading view draws its chip via a `TextRenderer`), so add
+                    // the fill here to keep exported RTF looking the same.
+                    codeBackground = true
                 }
             }
             if !traits.isEmpty {
@@ -232,6 +237,8 @@ enum RichTextExporter {
             attributes[.foregroundColor] = NSColor(run.foregroundColor ?? theme.textPrimary)
             if let background = run.backgroundColor {
                 attributes[.backgroundColor] = NSColor(background)
+            } else if codeBackground {
+                attributes[.backgroundColor] = NSColor(theme.inlineCodeFill)
             }
             if run.inlinePresentationIntent?.contains(.strikethrough) == true {
                 attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue

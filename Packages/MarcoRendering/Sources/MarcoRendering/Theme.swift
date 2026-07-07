@@ -262,7 +262,9 @@ func applyingCopiedFlash(
     var copy = base
     var didFlash = false
     for run in copy.runs where run.link == flashURL {
-        copy[run.range].backgroundColor = theme.inlineCodeFlashFill
+        // Flip the chip to its accent flash style — `InlineCodeChipRenderer`
+        // reads this and fills the accent surface; the text color is set here.
+        copy[run.range][InlineCodeChipAttribute.self] = .flash
         copy[run.range].foregroundColor = theme.inlineCodeFlashText
         didFlash = true
     }

@@ -65,8 +65,11 @@ struct TableBlockView: View {
         HStack(spacing: 0) {
             ForEach(cells.indices, id: \.self) { c in
                 let alignment = c < alignments.count ? alignments[c] : .leading
-                Text(InlineMarkdown.attributed(cells[c], theme: theme))
-                    .font(isHeader ? theme.bodyFont.weight(.semibold) : theme.bodyFont)
+                InlineCodeText(
+                    attributed: InlineMarkdown.attributed(cells[c], theme: theme),
+                    theme: theme,
+                    font: isHeader ? theme.bodyFont.weight(.semibold) : theme.bodyFont,
+                    selectable: false)
                     .foregroundStyle(theme.textPrimary)
                     .multilineTextAlignment(textAlignment(alignment))
                     .fixedSize(horizontal: false, vertical: true)

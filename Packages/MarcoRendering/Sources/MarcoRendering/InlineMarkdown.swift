@@ -108,8 +108,12 @@ public enum InlineMarkdown {
         for range in codeRanges {
             // Leave the font alone: the `.code` intent already renders
             // monospaced and inherits the surrounding size, so inline code
-            // scales with headings/body. We only tint it.
-            attributed[range].backgroundColor = theme.inlineCodeFill
+            // scales with headings/body. Mark the run as a chip (drawn as a
+            // rounded, padded fill by `InlineCodeChipRenderer`) rather than
+            // setting a flat `backgroundColor` — that read as a cheap sharp
+            // highlight hugging the glyphs. The renderer paints the fill; here
+            // we only tag the run and set its text color.
+            attributed[range][InlineCodeChipAttribute.self] = .normal
             attributed[range].foregroundColor = theme.inlineCodeText
             // Telegram-style click-to-copy: carry the span's text on a custom
             // `marco-copy://` link the app resolves by copying to the
