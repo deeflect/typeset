@@ -52,6 +52,18 @@ enum SnapshotRunner {
         let base = url.deletingPathExtension().lastPathComponent
         FileHandle.standardError.write(Data("snapshot: parsed \(blocks.count) blocks from \(base) (variant=\(variant))\n".utf8))
 
+        // M6 Phase 1 slice 1: render the TextKit 2 reading surface instead of
+        // the shipping SwiftUI renderer, reusing this proven headless path.
+        if variant == "textkit" {
+            for scheme in [ColorScheme.light, ColorScheme.dark] {
+                let theme = Theme(colorScheme: scheme, scale: CGFloat(scale))
+                let suffix = scheme == .dark ? "dark" : "light"
+                let path = "\(outDir)/\(base)-textkit-\(suffix).png"
+                TextKitReadingSnapshotRunner.writePNG(text: text, blocks: blocks, theme: theme, baseURL: url, to: path)
+            }
+            return true
+        }
+
         for scheme in [ColorScheme.light, ColorScheme.dark] {
             prewarmCode(blocks: blocks, isDark: scheme == .dark)
             let theme = Theme(colorScheme: scheme, scale: CGFloat(scale))

@@ -13,6 +13,9 @@ extension FocusedValues {
 struct MarcoCommands: Commands {
     @FocusedValue(\.windowModel) private var model
     @AppStorage("textScale") private var textScale: Double = 1.0
+    #if DEBUG
+    @AppStorage("debugTextKitReading") private var debugTextKitReading = false
+    #endif
 
     /// Bridged from `AppDelegate` (AppKit open panel) since Open is app-level,
     /// not window-level.
@@ -107,6 +110,14 @@ struct MarcoCommands: Commands {
                 .keyboardShortcut("]", modifiers: .command)
                 .disabled(!(model?.canGoForward ?? false))
         }
+
+        #if DEBUG
+        // MARK: Debug — M6 TextKit 2 reading surface (Phase 1, slice 1)
+        CommandMenu("Debug") {
+            Toggle("TextKit 2 Reading Surface", isOn: $debugTextKitReading)
+                .keyboardShortcut("t", modifiers: [.command, .control])
+        }
+        #endif
     }
 }
 

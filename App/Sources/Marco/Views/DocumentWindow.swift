@@ -17,6 +17,17 @@ struct DocumentWindow: View {
 
     @State private var model = WindowModel()
 
+    #if DEBUG
+    /// M6 Phase 1 slice 1: route document windows to the new TextKit 2 reading
+    /// surface instead of the shipping `DocumentRenderer`. Debug-only — the
+    /// toggle lives in the Debug menu; `MARCO_TEXTKIT_READING=1` forces it on.
+    /// Release builds never expose it (this whole member is `#if DEBUG`).
+    @AppStorage("debugTextKitReading") private var debugTextKitReading = false
+    private var useTextKitReading: Bool {
+        debugTextKitReading || ProcessInfo.processInfo.environment["MARCO_TEXTKIT_READING"] == "1"
+    }
+    #endif
+
     private var theme: Theme {
         Theme(colorScheme: colorScheme, scale: CGFloat(textScale))
     }
@@ -97,8 +108,24 @@ struct DocumentWindow: View {
                     }
                     .transition(.opacity)
                 } else {
+                    #if DEBUG
+                    if useTextKitReading {
+                        TextKitReadingView(
+                            text: controller.currentText,
+                            blocks: controller.blocks,
+                            theme: theme,
+                            model: model,
+                            documentURL: model.currentURL
+                        )
+                        .transition(.opacity)
+                    } else {
+                        DocumentRenderer(controller: controller, model: model, documentURL: model.currentURL)
+                            .transition(.opacity)
+                    }
+                    #else
                     DocumentRenderer(controller: controller, model: model, documentURL: model.currentURL)
                         .transition(.opacity)
+                    #endif
                 }
             }
             .animation(reduceMotion ? nil : Theme.Motion.state, value: controller.isEditing)
