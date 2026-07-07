@@ -45,6 +45,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.terminate(nil)
             return
         }
+        // M6 Phase 0 spike (throwaway, see App/Sources/Marco/Spike): drives
+        // one TextKit 2 or LazyVStack measurement in a real (visible)
+        // window, prints results, and quits.
+        if TextKitSpikeBenchRunner.runIfRequested() {
+            return
+        }
         #endif
         // Suppress the automatic "Untitled" window macOS would otherwise
         // create for a document-based-looking app with no file yet — we

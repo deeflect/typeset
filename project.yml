@@ -77,6 +77,13 @@ targets:
         com.apple.security.app-sandbox: true
         com.apple.security.files.user-selected.read-write: true
         com.apple.security.print: true
+        # M6 Phase 0 spike-only, narrow read-only exception (see
+        # App/Sources/Marco/Spike) so the headless bench harness can read
+        # the generated perf fixtures by absolute path without an open
+        # panel. Sandbox stays on otherwise. Remove once the spike is done
+        # (same pattern as M0 Spike A, PLAN §8).
+        com.apple.security.temporary-exception.files.absolute-path.read-only:
+          - /path/to/typeset/Tests/Fixtures/generated/
   MarcoQuickLook:
     type: app-extension
     platform: macOS
