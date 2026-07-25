@@ -22,6 +22,15 @@
 	<string>1</string>
 	<key>NSExtension</key>
 	<dict>
+		<key>NSExtensionAttributes</key>
+		<dict>
+			<key>QLSupportedContentTypes</key>
+			<array>
+				<string>net.daringfireball.markdown</string>
+			</array>
+			<key>QLSupportsSearchableItems</key>
+			<false/>
+		</dict>
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.quicklook.preview</string>
 		<key>NSExtensionPrincipalClass</key>
@@ -29,11 +38,5 @@
 	</dict>
 	<key>NSHumanReadableCopyright</key>
 	<string></string>
-	<key>QLSupportedContentTypes</key>
-	<array>
-		<string>net.daringfireball.markdown</string>
-	</array>
-	<key>QLSupportsSearchableItems</key>
-	<false/>
 </dict>
 </plist>

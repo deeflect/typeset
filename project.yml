@@ -105,12 +105,18 @@ targets:
       properties:
         CFBundleDisplayName: $(APP_NAME) Quick Look
         NSHumanReadableCopyright: ""
+        # QLSupportedContentTypes / QLSupportsSearchableItems must live inside
+        # NSExtensionAttributes. At the plist root — where they were — Quick
+        # Look never learns which types this extension claims, so it silently
+        # skipped it and fell back to the built-in plain-text previewer, which
+        # is why Space on a .md file showed raw Markdown.
         NSExtension:
           NSExtensionPointIdentifier: com.apple.quicklook.preview
           NSExtensionPrincipalClass: PreviewViewController
-        QLSupportedContentTypes:
-          - net.daringfireball.markdown
-        QLSupportsSearchableItems: false
+          NSExtensionAttributes:
+            QLSupportedContentTypes:
+              - net.daringfireball.markdown
+            QLSupportsSearchableItems: false
     entitlements:
       path: App/Sources/MarcoQuickLook/MarcoQuickLook.entitlements
       properties:

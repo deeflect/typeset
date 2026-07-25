@@ -84,28 +84,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
-    // MARK: - Whole-document selection (Edit ▸ Select All / Copy)
-    //
-    // Deliberately implemented on the app delegate — the *last* link in the
-    // responder chain. The reading view is per-block `Text` with no text
-    // responder of its own, so these only fire when nothing nearer the user's
-    // focus wants them: the ⌘E source editor and the ⌘F field keep their own
-    // Copy / Select All untouched, and ⌘A / ⌘C in the reading view fall
-    // through to here and act on the whole document.
-
-    @objc func selectAll(_ sender: Any?) {
-        MainActor.assumeIsolated { AppDelegate.focusedModel()?.selectAllDocument() }
-    }
-
-    @objc func copy(_ sender: Any?) {
-        MainActor.assumeIsolated { AppDelegate.focusedModel()?.copySelection() }
-    }
-
-    @MainActor
-    fileprivate static func focusedModel() -> WindowModel? {
-        DocumentOpener.shared.model(for: NSApp.keyWindow ?? NSApp.mainWindow)
-    }
-
     @MainActor
     func openPanel() {
         let panel = NSOpenPanel()
@@ -116,24 +94,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK else { return }
         DocumentOpener.shared.open(panel.urls)
-    }
-}
-
-/// Enables Edit ▸ Select All / Copy only when the reading view can actually
-/// service them. Without this AppKit would light both items up permanently,
-/// since the delegate answers the selectors unconditionally.
-extension AppDelegate: NSMenuItemValidation {
-    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        MainActor.assumeIsolated {
-            let model = AppDelegate.focusedModel()
-            switch menuItem.action {
-            case #selector(selectAll(_:)):
-                return model?.canSelectAllDocument ?? false
-            case #selector(copy(_:)):
-                return model?.isSelectAllActive ?? false
-            default:
-                return true
-            }
-        }
     }
 }
