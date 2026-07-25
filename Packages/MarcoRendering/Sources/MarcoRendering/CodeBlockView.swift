@@ -96,8 +96,17 @@ public struct CodeBlockView: View {
             copyButton
                 .opacity(hovering ? 1 : 0.35)
         }
-        .padding(.top, 9)
-        .padding(.trailing, 12)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        // The code inside the card scrolls horizontally underneath this
+        // chrome, and `chipFill` is translucent — so a long first line used
+        // to collide with the language label and show through the copy
+        // button. Backing the whole cluster in the card's own (opaque) fill
+        // makes it an invisible shield: it disappears against the card and
+        // hides whatever scrolls beneath it.
+        .background(theme.codeCardFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .padding(.top, 5)
+        .padding(.trailing, 7)
         .animation(Theme.Motion.feedback, value: hovering)
     }
 
