@@ -6,6 +6,10 @@ APP_NAME = Marco
 APP_BUNDLE_ID = com.dee.marco.draft
 MARKETING_VERSION = 0.1.0
 
+// Shown in Get Info and the App Store listing. Xcode strips a literal
+// copyright sign, so it is spelled out.
+APP_COPYRIGHT = Copyright (c) 2026 Dmitry Kargaev. All rights reserved.
+
 CURRENT_PROJECT_VERSION = 1
 SWIFT_VERSION = 6.0
 MACOSX_DEPLOYMENT_TARGET = 26.0

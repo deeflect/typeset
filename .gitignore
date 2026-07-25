@@ -19,10 +19,9 @@ Tests/Fixtures/generated/
 .DS_Store
 
 # Local build output for snapshot/verification (see SnapshotRunner)
-.build-dd/
-.build-snap/
-# Release archive + export output (Scripts/release.sh)
-.build-release/
+# Any local build/derived-data scratch dir: .build-dd, .build-snap,
+# .build-release (Scripts/release.sh), ad-hoc ones, etc.
+.build-*/
 
 # Claude Code local project state
 .claude/

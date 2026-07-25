@@ -1,3 +1,10 @@
+// M6 work in progress: the TextKit 2 reading surface is reachable only from
+// the Debug menu's toggle and has no tables, task checkboxes, frontmatter chip
+// or code-block chrome yet. Gated out of Release entirely so an unfinished
+// feature isn't compiled into a shipping App Store binary (the Spike/ folder
+// does the same).
+#if DEBUG
+
 import AppKit
 import MarcoCore
 import MarcoRendering
@@ -594,3 +601,5 @@ enum TextKitReadingStyler {
         return offsets
     }
 }
+
+#endif

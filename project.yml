@@ -52,8 +52,14 @@ targets:
         CFBundleDisplayName: $(APP_NAME)
         CFBundleName: $(APP_NAME)
         CFBundleIconName: AppIcon
+        # Without these the generated Info.plist keeps XcodeGen's default 1.0
+        # and Config/App.xcconfig's MARKETING_VERSION is silently ignored —
+        # so the documented "rename/version in one place" story didn't hold,
+        # and App Store builds would carry the wrong version.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSPrincipalClass: NSApplication
-        NSHumanReadableCopyright: ""
+        NSHumanReadableCopyright: $(APP_COPYRIGHT)
         LSApplicationCategoryType: public.app-category.productivity
         CFBundleDocumentTypes:
           - CFBundleTypeName: Markdown Document
@@ -77,19 +83,22 @@ targets:
         com.apple.security.app-sandbox: true
         com.apple.security.files.user-selected.read-write: true
         com.apple.security.print: true
-        # M6 Phase 0 spike-only, narrow read-only exception (see
-        # App/Sources/Marco/Spike) so the headless bench harness can read
-        # the generated perf fixtures by absolute path without an open
-        # panel. Sandbox stays on otherwise. Remove once the spike is done
-        # (same pattern as M0 Spike A, PLAN §8).
-        com.apple.security.temporary-exception.files.absolute-path.read-only:
-          - /path/to/typeset/Tests/Fixtures/generated/
+        # NOTE: no temporary-exception entitlement. A read-only absolute-path
+        # exception for the M6 spike's perf fixtures used to live here and was
+        # shipping in Release — it hard-coded a developer's local checkout path
+        # into the signed binary and would draw an App Store review question
+        # for no user-facing benefit. The headless benches read fixtures via
+        # the unsandboxed copy Scripts/snapshot.sh already builds.
   MarcoQuickLook:
     type: app-extension
     platform: macOS
     deploymentTarget: "26.0"
     sources:
       - path: App/Sources/MarcoQuickLook
+        excludes:
+          - "Resources/**"
+      - path: App/Sources/MarcoQuickLook/Resources
+        buildPhase: resources
     dependencies:
       - package: MarcoCore
       - package: MarcoRendering
@@ -104,7 +113,9 @@ targets:
       path: App/Sources/MarcoQuickLook/Info.plist
       properties:
         CFBundleDisplayName: $(APP_NAME) Quick Look
-        NSHumanReadableCopyright: ""
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSHumanReadableCopyright: $(APP_COPYRIGHT)
         # QLSupportedContentTypes / QLSupportsSearchableItems must live inside
         # NSExtensionAttributes. At the plist root — where they were — Quick
         # Look never learns which types this extension claims, so it silently
