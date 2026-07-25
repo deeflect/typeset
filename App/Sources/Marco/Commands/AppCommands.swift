@@ -35,6 +35,11 @@ struct MarcoCommands: Commands {
                 .keyboardShortcut("o", modifiers: .command)
         }
         CommandGroup(replacing: .saveItem) {
+            // Replacing this group also removed the standard Close item, which
+            // left the app with no ⌘W at all.
+            Button("Close") { NSApp.keyWindow?.performClose(nil) }
+                .keyboardShortcut("w", modifiers: .command)
+            Divider()
             Button("Save") { model?.save() }
                 .keyboardShortcut("s", modifiers: .command)
                 .disabled(!hasDocument)

@@ -38,6 +38,38 @@ final class WindowModel {
     /// menu up anchored to it (mouse clicks anchor to it directly).
     weak var outlineAnchor: NSView?
 
+    /// True while Edit ▸ Select All has claimed the whole document.
+    ///
+    /// The reading view is a stack of per-block `Text` views, and SwiftUI text
+    /// selection cannot span two of them — dragging across the document only
+    /// ever selects within one block, which is why "copy the whole thing"
+    /// didn't work. Select-all is therefore modelled explicitly: the reading
+    /// view tints the entire content column, and Copy takes the whole
+    /// document. (A real continuous selection needs the single-text-view
+    /// reading surface M6 is building.)
+    private(set) var isSelectAllActive = false
+
+    /// Select All applies to a document that isn't already in the ⌘E source
+    /// editor (which has its own, real, selection).
+    var canSelectAllDocument: Bool { controller != nil && controller?.isEditing != true }
+
+    func selectAllDocument() {
+        guard canSelectAllDocument else { return }
+        isSelectAllActive = true
+    }
+
+    func deselectAll() {
+        guard isSelectAllActive else { return }
+        isSelectAllActive = false
+    }
+
+    /// Edit ▸ Copy (⌘C) with the whole document selected. Puts RTF, HTML and
+    /// plain Markdown on the pasteboard, same as ⇧⌘C.
+    func copySelection() {
+        guard isSelectAllActive else { return }
+        copyAsRichText()
+    }
+
     /// The image currently shown in the full-window lightbox (PLAN §6), or
     /// `nil` when none. Presented at the window's top level by `DocumentWindow`
     /// so it escapes the reading column's measure clipping.
@@ -66,10 +98,22 @@ final class WindowModel {
 
     weak var window: NSWindow? {
         didSet {
+            guard window !== oldValue else { return }
             controller?.window = window
-            window?.representedURL = currentURL
+            applyWindowIdentity()
             observeLiveResize(of: window)
         }
+    }
+
+    /// Keeps the window's `title` and `representedURL` pointed at the live
+    /// document. The title bar itself is hidden (`.hiddenTitleBar`), but the
+    /// title is what the Window menu, Mission Control, ⌘` cycling and the
+    /// proxy-icon menu display — leaving it unset is why every window used to
+    /// read as an indistinguishable "Marco".
+    private func applyWindowIdentity() {
+        guard let window else { return }
+        window.representedURL = currentURL
+        window.title = currentURL?.lastPathComponent ?? Bundle.main.displayName
     }
 
     /// True while the window is in a live-resize drag. Read imperatively (not in
@@ -125,6 +169,7 @@ final class WindowModel {
     }
 
     private func activate(_ url: URL, restoreScroll: Bool) {
+        deselectAll()
         controller?.stop()
         let controller = DocumentReloadController(url: url)
         controller.window = window
@@ -137,9 +182,10 @@ final class WindowModel {
         self.controller = controller
         controller.start()
         // Standard document proxy behaviors (⌘-click path menu, title drag)
-        // come free from representedURL; keep it pointed at the live document
-        // as history/navigation swaps the controller.
-        window?.representedURL = url
+        // come free from representedURL; keep it — and the Window-menu title —
+        // pointed at the live document as history/navigation swaps the
+        // controller.
+        applyWindowIdentity()
         // Remember this document for the empty-state home screen (PLAN §6).
         RecentDocumentsStore.shared.record(url)
 
@@ -263,6 +309,7 @@ final class WindowModel {
 
     func openFind() {
         guard let controller else { return }
+        deselectAll()
         find.open(blocks: controller.blocks)
     }
 
@@ -281,6 +328,7 @@ final class WindowModel {
 
     func toggleEditMode() {
         guard let controller else { return }
+        deselectAll()
         if controller.isEditing {
             let caretLine = editorHandle.caretLine()
             if let targetID = controller.exitEditMode(caretLine: caretLine) {
@@ -412,6 +460,7 @@ final class WindowModel {
     /// under Reduce Motion, which gates only the pulse).
     func scrollToHeading(_ id: String, reduceMotion: Bool) {
         guard let controller else { return }
+        deselectAll()
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) { controller.scrollPosition.scrollTo(id: id, anchor: .top) }

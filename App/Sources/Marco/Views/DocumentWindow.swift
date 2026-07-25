@@ -43,7 +43,11 @@ struct DocumentWindow: View {
 
     var body: some View {
         Group {
-            if url == nil {
+            // Keyed off the model, not the `WindowGroup` value, so a window
+            // that opened empty can adopt a document (`DocumentOpener` hands
+            // the launch window the file that was double-clicked instead of
+            // opening a second window for it).
+            if model.currentURL == nil {
                 EmptyStateView()
             } else {
                 detailContent
@@ -66,11 +70,15 @@ struct DocumentWindow: View {
         .toolbar { toolbarContent }
         .background { WindowAccessor { model.window = $0 } }
         .focusedValue(\.windowModel, model)
+        .onAppear { DocumentOpener.shared.register(model) }
         .task(id: url) {
             model.readingTheme = theme
             model.load(initial: url)
         }
-        .onDisappear { model.stop() }
+        .onDisappear {
+            DocumentOpener.shared.unregister(model)
+            model.stop()
+        }
         .onChange(of: colorScheme) { _, _ in InlineMarkdown.invalidate() }
         .onChange(of: theme) { _, newTheme in model.readingTheme = newTheme }
     }

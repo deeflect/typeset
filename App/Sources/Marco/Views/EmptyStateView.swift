@@ -13,7 +13,6 @@ struct EmptyStateView: View {
     /// `ImageRenderer` can't rasterize the live glass backdrop.
     var forceOpaque = false
 
-    @Environment(\.openWindow) private var openWindow
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
     @State private var recents = RecentDocumentsStore.shared
@@ -101,7 +100,7 @@ struct EmptyStateView: View {
 
             if let welcome = Bundle.main.url(forResource: "Welcome", withExtension: "md") {
                 Button {
-                    openWindow(value: Optional(welcome))
+                    DocumentOpener.shared.open(welcome)
                 } label: {
                     Label("Read the Guide", systemImage: "book")
                 }
@@ -131,7 +130,7 @@ struct EmptyStateView: View {
             .padding(.bottom, 4)
 
             ForEach(recents.entries) { entry in
-                RecentRow(entry: entry) { openWindow(value: Optional(entry.url)) }
+                RecentRow(entry: entry) { DocumentOpener.shared.open(entry.url) }
             }
         }
     }
@@ -142,7 +141,7 @@ struct EmptyStateView: View {
         guard let url = urls.first(where: { markdownExtensions.contains($0.pathExtension.lowercased()) }) else {
             return false
         }
-        openWindow(value: Optional(url))
+        DocumentOpener.shared.open(url)
         return true
     }
 }

@@ -36,6 +36,17 @@ struct DocumentRenderer: View {
                 }
             }
             .scrollTargetLayout()
+            // Edit ▸ Select All: one contiguous tint over the whole content
+            // column. Per-block `Text` can't express a real cross-block
+            // selection, so this is what "everything is selected" looks like
+            // until the single-text-view reading surface lands.
+            .background {
+                if model.isSelectAllActive {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color(nsColor: .selectedTextBackgroundColor))
+                        .padding(.horizontal, -6)
+                }
+            }
             .frame(maxWidth: theme.contentMaxWidth, alignment: .leading)
             .padding(.horizontal, theme.contentHorizontalPadding)
             .padding(.top, theme.contentTopPadding)
@@ -53,6 +64,8 @@ struct DocumentRenderer: View {
         // dropdown's checkmark. Debounced inside the model.
         .onChange(of: controller.scrollPosition.viewID as? String, initial: true) { _, top in
             model.trackOutline(topBlockID: top)
+            // Scrolling away is the natural "never mind" for a select-all.
+            model.deselectAll()
         }
         // The outline just jumped to a heading: pulse it so the instant landing
         // reads as an arrival rather than a teleport.

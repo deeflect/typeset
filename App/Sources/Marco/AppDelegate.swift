@@ -3,13 +3,9 @@ import UniformTypeIdentifiers
 import MarcoRendering
 
 /// Bridges AppKit-only entry points (Finder double-click / drag-to-Dock,
-/// and the classic `NSOpenPanel`) into SwiftUI's `openWindow` action.
-///
-/// `MarcoApp` wires `onOpenURLs` once it has access to `openWindow` from
-/// the environment (App structs can read `@Environment` in `body`).
+/// the classic `NSOpenPanel`, Dock reopen) into `DocumentOpener`, which
+/// decides which window each request should land in.
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    var onOpenURLs: (([URL]) -> Void)?
-
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Resolves + starts accessing every persisted folder-access
         // bookmark (see FolderAccessStore) and logs the active grants.
@@ -19,6 +15,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // (PLAN §8), so a Release binary has no code path that reads
         // MARCO_SNAPSHOT/MARCO_*_BENCH — setting them is a guaranteed no-op.
         #if DEBUG
+        // The M6 TextKit-2 reading surface is an in-progress spike — it has no
+        // tables, task checkboxes, frontmatter chip or code-block chrome yet.
+        // Its Debug-menu toggle is `@AppStorage`-backed, so flipping it once
+        // left every later launch rendering documents with that unfinished
+        // surface, which reads as "the app is broken". Make the toggle
+        // session-scoped: always start on the shipping renderer.
+        UserDefaults.standard.removeObject(forKey: "debugTextKitReading")
         // Headless snapshot mode (visual verification without Screen
         // Recording): render the requested file to PNGs and exit.
         if SnapshotRunner.runIfRequested() {
@@ -52,18 +55,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         #endif
-        // Suppress the automatic "Untitled" window macOS would otherwise
-        // create for a document-based-looking app with no file yet — we
-        // want the empty-state window instead, which WindowGroup(for:)
-        // already supplies via its `defaultValue`.
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        onOpenURLs?(urls)
+        MainActor.assumeIsolated { DocumentOpener.shared.open(urls) }
     }
 
+    /// No. SwiftUI's `WindowGroup` already creates its default (empty-state)
+    /// window at launch; answering `true` here made AppKit ask for a *second*
+    /// one, which is one of the stray empty windows a Finder open used to
+    /// leave behind. Reopen from the Dock is handled below instead.
     func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool {
-        true
+        false
+    }
+
+    /// Always `false` — every reopen is handled here, never by AppKit.
+    ///
+    /// Letting AppKit do its default reopen handling spawned a fresh empty
+    /// window each time the app was activated with a file (`open -a Marco
+    /// foo.md` on an already-running app), which is the second half of the
+    /// "opening one file gives me three windows" bug. Reopen with no windows
+    /// left is the one case that legitimately wants a window; `DocumentOpener`
+    /// supplies the empty-state one, and a file arriving right behind it will
+    /// land in that same window rather than a new one.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !flag else { return false }
+        MainActor.assumeIsolated { DocumentOpener.shared.openEmptyWindow() }
+        return false
+    }
+
+    // MARK: - Whole-document selection (Edit ▸ Select All / Copy)
+    //
+    // Deliberately implemented on the app delegate — the *last* link in the
+    // responder chain. The reading view is per-block `Text` with no text
+    // responder of its own, so these only fire when nothing nearer the user's
+    // focus wants them: the ⌘E source editor and the ⌘F field keep their own
+    // Copy / Select All untouched, and ⌘A / ⌘C in the reading view fall
+    // through to here and act on the whole document.
+
+    @objc func selectAll(_ sender: Any?) {
+        MainActor.assumeIsolated { AppDelegate.focusedModel()?.selectAllDocument() }
+    }
+
+    @objc func copy(_ sender: Any?) {
+        MainActor.assumeIsolated { AppDelegate.focusedModel()?.copySelection() }
+    }
+
+    @MainActor
+    fileprivate static func focusedModel() -> WindowModel? {
+        DocumentOpener.shared.model(for: NSApp.keyWindow ?? NSApp.mainWindow)
     }
 
     @MainActor
@@ -75,6 +115,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK else { return }
-        onOpenURLs?(panel.urls)
+        DocumentOpener.shared.open(panel.urls)
+    }
+}
+
+/// Enables Edit ▸ Select All / Copy only when the reading view can actually
+/// service them. Without this AppKit would light both items up permanently,
+/// since the delegate answers the selectors unconditionally.
+extension AppDelegate: NSMenuItemValidation {
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        MainActor.assumeIsolated {
+            let model = AppDelegate.focusedModel()
+            switch menuItem.action {
+            case #selector(selectAll(_:)):
+                return model?.canSelectAllDocument ?? false
+            case #selector(copy(_:)):
+                return model?.isSelectAllActive ?? false
+            default:
+                return true
+            }
+        }
     }
 }
