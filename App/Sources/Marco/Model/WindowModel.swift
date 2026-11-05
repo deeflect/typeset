@@ -341,6 +341,10 @@ final class WindowModel {
                 return true
             }
         }
+        if let id = readingSnapshot?.footnoteBlockIDs[fragment.lowercased()] {
+            nativeReader.jump(toBlock: id)
+            return true
+        }
         return false
     }
 

@@ -662,3 +662,77 @@ extension NativeMarkdownDocumentTests {
         XCTAssertEqual(x(quoteAt) - x(0), 17, accuracy: 0.5)
     }
 }
+
+extension NativeMarkdownDocumentTests {
+    private func render(_ source: String) -> NativeMarkdownDocument {
+        NativeMarkdownDocument.build(source: source, blocks: MarkdownParser.parse(source), theme: Theme(colorScheme: .light, scale: 1),
+                                     documentURL: URL(fileURLWithPath: "/tmp/docs/readme.md"))
+    }
+
+    func testGitHubAlertsTitleTintAndUndimmedBody() {
+        let doc = render("> [!warning]\n> Mind the *gap*.\n\n> Plain quote\n\n> [!NOTE] not alone\n> stays a quote\n")
+        let text = doc.attributedString, plain = text.string as NSString
+        XCTAssertFalse(text.string.lowercased().contains("[!warning]"))
+        XCTAssertTrue(text.string.contains("[!NOTE] not alone"), "marker must be alone on its line")
+        XCTAssertEqual(text.attribute(.foregroundColor, at: plain.range(of: "Warning").location, effectiveRange: nil) as? NSColor, .systemOrange)
+        XCTAssertNotNil(text.attribute(.attachment, at: plain.range(of: "Warning").location - 2, effectiveRange: nil))
+        XCTAssertEqual(text.attribute(.foregroundColor, at: plain.range(of: "Mind").location, effectiveRange: nil) as? NSColor, .labelColor)
+        XCTAssertEqual(text.attribute(.foregroundColor, at: plain.range(of: "Plain").location, effectiveRange: nil) as? NSColor, .secondaryLabelColor)
+        let style = text.attribute(.paragraphStyle, at: plain.range(of: "Mind").location, effectiveRange: nil) as? NSParagraphStyle
+        XCTAssertTrue(style?.textBlocks.first is MarcoTextBlock)
+    }
+
+    func testFootnotesNumberByReferenceAndMapToDefinitionBlock() {
+        let source = "Second[^b] first[^a] again[^b] missing[^x] and [ref][id].\n\n[^a]: Alpha note\n    continued.\n[^b]: Beta note\n\n[id]: https://example.com\n"
+        let blocks = MarkdownParser.parse(source)
+        let doc = render(source)
+        let plain = doc.attributedString.string
+        XCTAssertTrue(plain.hasPrefix("Second1 first2 again1 missing[^x] and ref."), plain)
+        XCTAssertTrue(plain.contains("2.\tAlpha note continued.\n1.\tBeta note"), plain)
+        let ref = doc.attributedString.attribute(.link, at: ("Second" as NSString).length, effectiveRange: nil) as? URL
+        XCTAssertEqual(ref?.fragment, "fn-b")
+        let refLink = doc.attributedString.attribute(.link, at: (plain as NSString).range(of: "ref.").location, effectiveRange: nil) as? URL
+        XCTAssertEqual(refLink?.host, "example.com")
+        let definitionBlock = blocks.first { $0.startLine == 2 }?.id
+        XCTAssertNotNil(definitionBlock)
+        XCTAssertEqual(doc.footnoteBlockIDs, ["fn-a": definitionBlock!, "fn-b": definitionBlock!])
+    }
+
+    func testReadmeHTMLRendersCommonTags() {
+        let source = """
+        <details>
+        <summary>More &amp; less</summary>
+
+        Hidden **content**.
+
+        </details>
+
+        <p align="center"><img src="logo.png" alt="Logo" width="100"></p>
+
+        Press <kbd>K</kbd>, H<sub>2</sub>O, x<sup>2</sup>, <b>bold</b> <a href="https://x.com">site</a><br>next <span>raw</span>
+        """
+        let doc = render(source)
+        let text = doc.attributedString, plain = text.string as NSString
+        XCTAssertTrue(text.string.hasPrefix("\u{25BE} More & less\nHidden content.\n\u{FFFC}\nPress K, H2O, x2, bold site\nnext <span>raw</span>"), text.string)
+        XCTAssertEqual((text.attribute(.font, at: 2, effectiveRange: nil) as? NSFont)?.fontDescriptor.symbolicTraits.contains(.bold), true)
+        XCTAssertEqual(doc.images.first?.url?.path, "/tmp/docs/logo.png")
+        XCTAssertEqual(doc.images.first?.alt, "Logo")
+        XCTAssertEqual((text.attribute(.paragraphStyle, at: doc.images[0].range.location, effectiveRange: nil) as? NSParagraphStyle)?.alignment, .center)
+        XCTAssertNotNil(text.attribute(.backgroundColor, at: plain.range(of: "K,").location, effectiveRange: nil))
+        XCTAssertGreaterThan(text.attribute(.baselineOffset, at: plain.range(of: "x2").location + 1, effectiveRange: nil) as? CGFloat ?? 0, 0)
+        XCTAssertLessThan(text.attribute(.baselineOffset, at: plain.range(of: "H2").location + 1, effectiveRange: nil) as? CGFloat ?? 0, 0)
+        XCTAssertEqual((text.attribute(.font, at: plain.range(of: "bold").location, effectiveRange: nil) as? NSFont)?.fontDescriptor.symbolicTraits.contains(.bold), true)
+        XCTAssertEqual((text.attribute(.link, at: plain.range(of: "site").location, effectiveRange: nil) as? URL)?.host, "x.com")
+    }
+
+    func testHTMLCommentsRenderNothingButKeepBlocks() {
+        let source = "<!-- human note\nacross lines -->\n\nBody <!-- inline --> text\n\n<!-- tail -->\n"
+        let blocks = MarkdownParser.parse(source)
+        let doc = render(source)
+        XCTAssertEqual(doc.attributedString.string, "Body  text\n")
+        XCTAssertEqual(doc.blockRanges.map(\.id), blocks.map(\.id))
+        XCTAssertEqual(doc.block(at: 0)?.id, blocks[1].id)
+        let edited = render(source.replacingOccurrences(of: "Body", with: "Bodies"))
+        XCTAssertEqual(edited.replacementRanges(from: doc).old, NSRange(location: 0, length: 11))
+    }
+}
