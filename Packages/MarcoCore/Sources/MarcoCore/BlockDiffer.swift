@@ -38,6 +38,14 @@ private struct IdentityKey: Hashable {
 
 public enum BlockDiffer {
 
+    /// "Changes since last viewed": ids in `current` (document order) that
+    /// weren't in the `stored` set from the last viewing, plus how many
+    /// stored ids are gone. An edited block counts once in each.
+    public static func changesSince(stored: Set<String>, current: [Block]) -> (changed: [String], removed: Int) {
+        let ids = current.map(\.id)
+        return (ids.filter { !stored.contains($0) }, stored.subtracting(ids).count)
+    }
+
     /// Diffs two block lists by `Block.id` (content hash + local
     /// occurrence index among same-hash duplicates), not by position.
     /// Since `Block.id` no longer bakes global document position into

@@ -92,6 +92,31 @@ final class DocumentOpener {
 
     func open(_ url: URL) { open([url]) }
 
+    /// File ▸ New from Clipboard (Preview's ⌘N): writes the pasteboard's plain
+    /// text to "Clipboard <date> at <time>.md" in the container's temporary
+    /// folder and opens it like any file. Beeps when there's no text.
+    func openClipboard(_ pasteboard: NSPasteboard = .general) {
+        guard let text = pasteboard.string(forType: .string),
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { NSSound.beep(); return }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm"
+        let base = "Clipboard \(formatter.string(from: Date()))"
+        let folder = FileManager.default.temporaryDirectory
+        var url = folder.appendingPathComponent(base + ".md")
+        var copy = 2
+        while FileManager.default.fileExists(atPath: url.path) {
+            url = folder.appendingPathComponent("\(base) \(copy).md")
+            copy += 1
+        }
+        do {
+            try Data(text.utf8).write(to: url, options: .withoutOverwriting)
+            open(url)
+        } catch {
+            NSSound.beep()
+        }
+    }
+
     /// Dock reopen with no windows left: bring the home screen back, or focus
     /// an empty-state window that is merely hidden.
     func openEmptyWindow() {

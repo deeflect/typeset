@@ -37,6 +37,14 @@ final class SourceEditorHandle {
         return line
     }
 
+    /// The selected source text and its 1-based file lines, or `nil` with no selection.
+    func selection() -> (text: String, lines: ClosedRange<Int>)? {
+        guard let textView, textView.selectedRange().length > 0 else { return nil }
+        let text = textView.string as NSString
+        let range = textView.selectedRange()
+        return (text.substring(with: range), AgentQuote.lines(in: text, range: range))
+    }
+
     /// Scrolls so `line` (0-based) is visible at the top of the editor and
     /// places the caret there.
     func scrollToLine(_ line: Int) {

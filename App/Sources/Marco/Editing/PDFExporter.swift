@@ -17,6 +17,27 @@ enum PDFExporter {
         }
     }
 
+    /// Same document as PDF/rich copy, written by AppKit's Office Open XML writer.
+    static func exportWord(source: String, url: URL?, suggestedName: String) {
+        Task {
+            let attributed = await preparedDocument(source: source, url: url)
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = [UTType(filenameExtension: "docx")].compactMap { $0 }
+            panel.nameFieldStringValue = suggestedName
+            guard panel.runModal() == .OK, let destination = panel.url else { return }
+            do {
+                try wordData(attributed).write(to: destination, options: .atomic)
+            } catch {
+                NSAlert(error: error).runModal()
+            }
+        }
+    }
+
+    static func wordData(_ attributed: NSAttributedString) throws -> Data {
+        try attributed.data(from: NSRange(location: 0, length: attributed.length),
+                            documentAttributes: [.documentType: NSAttributedString.DocumentType.officeOpenXML])
+    }
+
     static func print(source: String, url: URL?) {
         Task {
             let attributed = await preparedDocument(source: source, url: url)

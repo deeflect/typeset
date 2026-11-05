@@ -198,4 +198,13 @@ struct BlockDifferTests {
         #expect(reloaded.count == 1)
         #expect(elapsed < 0.01, "diff took \(elapsed)s, budget is 10ms")
     }
+
+    @Test func changesSinceStoredReportsNewBlocksInOrderAndRemovedCount() {
+        let before = MarkdownParser.parse("# Title\n\nKeep.\n\nOld.\n\nGone.\n")
+        let after = MarkdownParser.parse("# Title\n\nNew first.\n\nKeep.\n\nOld edited.\n")
+        let result = BlockDiffer.changesSince(stored: Set(before.map(\.id)), current: after)
+        #expect(result.changed == [after[1].id, after[3].id])
+        #expect(result.removed == 2)
+        #expect(BlockDiffer.changesSince(stored: Set(after.map(\.id)), current: after).changed.isEmpty)
+    }
 }

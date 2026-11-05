@@ -164,6 +164,10 @@ final class WindowModel {
     private func activate(_ url: URL, restoreScroll: Bool) {
         metadataExpanded = false
         removedBannerDismissed = false
+        changedSinceViewed = []
+        removedSinceViewed = 0
+        lastChangeJump = nil
+        nativeReader.markChanged(blockIDs: [])
         snapshotGeneration += 1
         snapshotTask?.cancel()
         readingSnapshot = nil
@@ -172,6 +176,10 @@ final class WindowModel {
         controller.window = window
         controller.onInitialLoaded = { [weak self, weak controller] in
             guard let self, let controller else { return }
+            if controller.loadError == nil, let stored = LastViewedStore.shared.blockIDs(for: url) {
+                (self.changedSinceViewed, self.removedSinceViewed) = BlockDiffer.changesSince(stored: stored, current: controller.blocks)
+                self.nativeReader.markChanged(blockIDs: Set(self.changedSinceViewed))
+            }
             if restoreScroll, let anchor = self.savedAnchor(for: url),
                controller.blocks.contains(where: { $0.id == anchor }) {
                 self.nativeReader.queueJump(toBlock: anchor)
@@ -244,6 +252,7 @@ final class WindowModel {
         }
         guard controller?.prepareToLeave() ?? true else { return }
         saveScrollAnchor()
+        rememberViewed()
         if historyIndex < history.count - 1 {
             history.removeSubrange((historyIndex + 1)...)
         }
@@ -265,6 +274,7 @@ final class WindowModel {
         guard canGoBack else { return }
         guard controller?.prepareToLeave() ?? true else { return }
         saveScrollAnchor()
+        rememberViewed()
         historyIndex -= 1
         activate(history[historyIndex], restoreScroll: true)
     }
@@ -273,6 +283,7 @@ final class WindowModel {
         guard canGoForward else { return }
         guard controller?.prepareToLeave() ?? true else { return }
         saveScrollAnchor()
+        rememberViewed()
         historyIndex += 1
         activate(history[historyIndex], restoreScroll: true)
     }
@@ -436,17 +447,96 @@ final class WindowModel {
         guard let controller else { return false }
         return controller.isEditing || (!controller.isLoading && readingSnapshot != nil)
     }
-    func prepareToClose() -> Bool { controller?.prepareToLeave() ?? true }
+    func prepareToClose() -> Bool {
+        let allowed = controller?.prepareToLeave() ?? true
+        rememberViewed()
+        return allowed
+    }
 
     func copyAsRichText(pasteboard: NSPasteboard = .general) {
         guard let controller else { return }
         RichTextExporter.copyLiveSource(controller.currentText, theme: readingTheme, url: controller.url, pasteboard: pasteboard)
     }
 
+    /// Edit ▸ Copy as Quote for Agent: `` `path:12-18` `` + the selection as a
+    /// `> ` quote. Reader lines come from the selected blocks; the editor uses
+    /// its exact selected lines.
+    func copyQuoteForAgent(pasteboard: NSPasteboard = .general) {
+        guard let controller else { return }
+        var quote: (text: String, lines: ClosedRange<Int>)?
+        if controller.isEditing {
+            quote = editorHandle.selection()
+        } else if let selection = nativeReader.selection() {
+            let byID = Dictionary(controller.blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            let offset = MarkdownParser.bodyLineOffset(in: controller.currentText)
+            if let lines = AgentQuote.lines(of: selection.blockIDs.compactMap { byID[$0] }, bodyLineOffset: offset) {
+                quote = (selection.text, lines)
+            }
+        }
+        guard let quote else { NSSound.beep(); return }
+        pasteboard.clearContents()
+        pasteboard.setString(AgentQuote.format(path: controller.url.path, lines: quote.lines, text: quote.text), forType: .string)
+    }
+
     func exportPDF() {
         guard let controller else { return }
         let name = (currentURL?.deletingPathExtension().lastPathComponent ?? "Document") + ".pdf"
         PDFExporter.exportPDF(source: controller.currentText, url: controller.url, suggestedName: name)
+    }
+
+    func exportWord() {
+        guard let controller else { return }
+        let name = (currentURL?.deletingPathExtension().lastPathComponent ?? "Document") + ".docx"
+        PDFExporter.exportWord(source: controller.currentText, url: controller.url, suggestedName: name)
+    }
+
+    // MARK: - Changes since last viewed
+
+    /// Blocks new or edited since this file was last left, in document order.
+    private(set) var changedSinceViewed: [String] = []
+    private(set) var removedSinceViewed = 0
+    /// ponytail: Next/Previous step from the last jumped-to change, ignoring
+    /// manual scrolling in between; derive from the viewport if that confuses.
+    private var lastChangeJump: String?
+
+    /// Marked blocks that still exist after any live reloads.
+    private var liveChanges: [String] {
+        let ids = Set(controller?.blocks.map(\.id) ?? [])
+        return changedSinceViewed.filter(ids.contains)
+    }
+
+    var changesSummary: String? {
+        let count = liveChanges.count
+        if count > 0 { return count == 1 ? "1 change since last opened" : "\(count) changes since last opened" }
+        return removedSinceViewed > 0 ? "Text removed since last opened" : nil
+    }
+
+    /// "7 of 12 done" for documents with task checkboxes.
+    var taskSummary: String? {
+        guard let boxes = readingSnapshot?.checkboxes, !boxes.isEmpty else { return nil }
+        return "\(boxes.filter(\.checked).count) of \(boxes.count) done"
+    }
+
+    private var changeJumpIndex: Int? { lastChangeJump.flatMap(liveChanges.firstIndex) }
+    var canGoToNextChange: Bool {
+        controller?.isEditing == false && (changeJumpIndex ?? -1) + 1 < liveChanges.count
+    }
+    var canGoToPreviousChange: Bool { controller?.isEditing == false && (changeJumpIndex ?? 0) > 0 }
+
+    func goToNextChange() { jumpToChange(at: (changeJumpIndex ?? -1) + 1) }
+    func goToPreviousChange() { jumpToChange(at: (changeJumpIndex ?? 0) - 1) }
+
+    private func jumpToChange(at index: Int) {
+        let changes = liveChanges
+        guard changes.indices.contains(index) else { return }
+        lastChangeJump = changes[index]
+        nativeReader.jump(toBlock: changes[index])
+    }
+
+    /// Stores what this document looks like now, for the next open's markers.
+    private func rememberViewed() {
+        guard let controller, !controller.isLoading, controller.loadError == nil else { return }
+        LastViewedStore.shared.record(controller.blocks.map(\.id), for: controller.url)
     }
 
     func printDocument() {
