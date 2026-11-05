@@ -61,7 +61,7 @@ final class SourceEditorHandle {
 /// `NSLayoutManager`, never a `NSTextLayoutManager`, so TextKit 2 can't
 /// activate — PLAN §4/§8: NSTextView on TextKit 1 is the FINAL decision,
 /// benchmarked against STTextView/TextKit 2 and found ~1000x faster on
-/// large files). SF Mono 13, wrapping, no line numbers/minimap. System
+/// large files). SF Mono 13.5/22, wrapping, no line numbers/minimap. System
 /// spellcheck/dictation/IME are left at their NSTextView defaults.
 struct SourceEditorView: NSViewRepresentable {
     @Binding var text: String
@@ -72,7 +72,7 @@ struct SourceEditorView: NSViewRepresentable {
     // nonisolated `NSTextStorageDelegate` callback (incremental styling). NSFont
     // isn't Sendable, but this value is never mutated after init, so the
     // cross-actor read is safe.
-    nonisolated(unsafe) static let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+    nonisolated(unsafe) static let font = NSFont.monospacedSystemFont(ofSize: 13.5, weight: .regular)
 
     func makeNSView(context: Context) -> NSScrollView {
         // Building the TextKit stack by hand (rather than
@@ -86,7 +86,7 @@ struct SourceEditorView: NSViewRepresentable {
         textContainer.widthTracksTextView = true
         layoutManager.addTextContainer(textContainer)
 
-        let textView = NSTextView(frame: .zero, textContainer: textContainer)
+        let textView = MeasuredTextView(frame: .zero, textContainer: textContainer)
         textView.isRichText = false
         textView.usesFindBar = true
         textView.font = Self.font
@@ -105,7 +105,6 @@ struct SourceEditorView: NSViewRepresentable {
         textView.minSize = .zero
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.autoresizingMask = [NSView.AutoresizingMask.width]
-        textView.textContainerInset = NSSize(width: 24, height: 20)
         textView.delegate = context.coordinator
         textStorage.delegate = context.coordinator
         textView.string = text
@@ -172,5 +171,15 @@ struct SourceEditorView: NSViewRepresentable {
             guard editedMask.contains(.editedCharacters) else { return }
             MarkdownSyntaxStyler.styleEdited(textStorage, editedRange: editedRange, baseFont: SourceEditorView.font, colors: parent.colors)
         }
+    }
+}
+
+/// Board 06: raw Markdown on the same 680 pt measure as the reader, with
+/// 28 pt minimum gutters once the window is narrower.
+final class MeasuredTextView: NSTextView {
+    override func setFrameSize(_ newSize: NSSize) {
+        let inset = NSSize(width: max(28, (newSize.width - 680) / 2), height: 64)
+        if textContainerInset != inset { textContainerInset = inset }
+        super.setFrameSize(newSize)
     }
 }

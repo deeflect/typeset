@@ -2,6 +2,7 @@ import AppKit
 import MarcoCore
 import Observation
 import SwiftUI
+import UniformTypeIdentifiers
 import MarcoRendering
 
 /// The per-window brain that sits above `DocumentReloadController`. It owns
@@ -28,17 +29,18 @@ final class WindowModel {
 
     /// The heading whose section currently contains the top of the viewport,
     /// tracked off the reading view's scroll position (debounced). Drives the
-    /// checkmark in the outline dropdown (⌘1 / toolbar). `nil` until the first
+    /// selected row in the outline sidebar (^⌘S). `nil` until the first
     /// scroll signal or in a document with no headings.
     private(set) var currentOutlineID: String?
     private var outlineTrackTask: Task<Void, Never>?
-    /// After the dropdown jumps to a heading we set `currentOutlineID`
+    /// After the sidebar jumps to a heading we set `currentOutlineID`
     /// optimistically; the scroll tracker would otherwise re-derive it on its
     /// debounce and flicker. Ignore tracker updates until this instant.
     private var suppressOutlineTrackingUntil: Date = .distantPast
-    /// The toolbar's outline button view, captured so ⌘1 can pop the native
-    /// menu up anchored to it (mouse clicks anchor to it directly).
-    weak var outlineAnchor: NSView?
+    /// Whether the outline sidebar is showing (^⌘S, toolbar toggle).
+    var showsOutline = false
+    /// Close on the moved/deleted banner; reset per document.
+    var removedBannerDismissed = false
 
     /// The image currently shown in the full-window lightbox (PLAN §6), or
     /// `nil` when none. Presented at the window's top level by `DocumentWindow`
@@ -91,7 +93,7 @@ final class WindowModel {
     private var closeDelegate: WindowCloseDelegate?
 
     /// Keeps the window's `title` and `representedURL` pointed at the live
-    /// document. The title bar itself is hidden (`.hiddenTitleBar`), but the
+    /// document. The toolbar shows it via `navigationTitle`, and the
     /// title is what the Window menu, Mission Control, ⌘` cycling and the
     /// proxy-icon menu display — leaving it unset is why every window used to
     /// read as an indistinguishable "Marco".
@@ -157,6 +159,7 @@ final class WindowModel {
 
     private func activate(_ url: URL, restoreScroll: Bool) {
         metadataExpanded = false
+        removedBannerDismissed = false
         snapshotGeneration += 1
         snapshotTask?.cancel()
         readingSnapshot = nil
@@ -244,6 +247,15 @@ final class WindowModel {
         activate(std, restoreScroll: false)
     }
 
+    /// Locate… on the moved/deleted banner: pick the file's new home.
+    func locateMovedFile() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = ["md", "markdown", "mdown"].compactMap { UTType(filenameExtension: $0) }
+        panel.directoryURL = currentURL?.deletingLastPathComponent()
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        navigate(to: url)
+    }
+
     func goBack() {
         guard canGoBack else { return }
         guard controller?.prepareToLeave() ?? true else { return }
@@ -277,10 +289,10 @@ final class WindowModel {
     private func presentAccessHint(for url: URL) {
         let folderName = url.deletingLastPathComponent().lastPathComponent
         if FolderAccessStore.isAccessDenied(at: url) {
-            accessHint = "Can't open \(url.lastPathComponent) — allow access to \u{201c}\(folderName)\u{201d} to follow relative links there."
+            accessHint = "Can\u{2019}t open \(url.lastPathComponent) without access to \u{201c}\(folderName)\u{201d}"
             accessHintAction = (title: "Allow Access\u{2026}", url: url)
         } else {
-            accessHint = "Can't open \(url.lastPathComponent) — it's outside the folder you granted access to."
+            accessHint = "\(url.lastPathComponent) is outside the folder you allowed"
             accessHintAction = nil
         }
         hintClearTask?.cancel()
@@ -307,7 +319,7 @@ final class WindowModel {
         let folder = url.deletingLastPathComponent()
         let granted = FolderAccessStore.shared.requestAccess(
             defaultDirectory: folder,
-            message: "Allow \(Bundle.main.displayName) to open files in \u{201c}\(folder.lastPathComponent)\u{201d}, so relative links between your Markdown files work.")
+            message: "Allow \(Bundle.main.displayName) to open files in \u{201c}\(folder.lastPathComponent)\u{201d}")
         guard granted != nil else { return }
         dismissAccessHint()
         navigate(to: url)
@@ -400,7 +412,7 @@ final class WindowModel {
         guard let controller, controller.isEditing else { return false }
         let destination = destination.standardizedFileURL
         guard destination != currentURL else {
-            controller.saveError = "Choose a different file for Save As."
+            controller.saveError = "Choose a different file to save to"
             return false
         }
         do {
@@ -409,7 +421,7 @@ final class WindowModel {
             activate(destination, restoreScroll: false)
             return true
         } catch {
-            controller.saveError = "Couldn't save to \(destination.lastPathComponent): \(error.localizedDescription)"
+            controller.saveError = "Couldn\u{2019}t save to \(destination.lastPathComponent): \(error.localizedDescription)"
             return false
         }
     }
@@ -437,52 +449,11 @@ final class WindowModel {
         PDFExporter.print(source: controller.currentText, url: controller.url)
     }
 
-    // MARK: - Outline dropdown
+    // MARK: - Outline sidebar
 
     /// The document's flat heading outline (one entry per top-level heading),
     /// rebuilt from the live block model so it tracks live reloads.
     var outlineItems: [OutlineItem] { OutlineBuilder.build(from: controller?.blocks ?? []) }
-
-    /// Whether the dropdown is meaningful: a document needs at least two
-    /// headings to jump between. One or zero headings ⇒ button disabled.
-    var hasOutline: Bool { outlineItems.count > 1 }
-
-    /// Builds and pops up the native headings menu, anchored to the toolbar
-    /// button (falling back to the window's top-leading corner). Called by both
-    /// the toolbar button and ⌘1. No-op unless there's something to jump to.
-    func showOutlineMenu() {
-        let items = outlineItems
-        guard items.count > 1 else { return }
-        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-
-        // A single strong target routes every item's action back to
-        // `scrollToHeading`. Kept alive on the stack for the whole `popUp`
-        // (which runs a nested modal loop synchronously).
-        let target = OutlineMenuTarget { [weak self] id in
-            self?.scrollToHeading(id, reduceMotion: reduceMotion)
-        }
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-        for item in items {
-            let menuItem = NSMenuItem(title: item.title, action: #selector(OutlineMenuTarget.fire(_:)), keyEquivalent: "")
-            menuItem.indentationLevel = item.depth
-            menuItem.representedObject = item.id
-            menuItem.target = target
-            menuItem.state = item.id == currentOutlineID ? .on : .off
-            menu.addItem(menuItem)
-        }
-
-        if let anchor = outlineAnchor {
-            // The anchor is a plain (non-flipped) NSView behind the toolbar
-            // button, so its origin is bottom-left: y just below 0 drops the
-            // menu directly under the button with a hair of gap.
-            let dropPoint = NSPoint(x: 0, y: anchor.isFlipped ? anchor.bounds.height + 4 : -4)
-            menu.popUp(positioning: nil, at: dropPoint, in: anchor)
-        } else if let content = window?.contentView {
-            let y = content.isFlipped ? 8 : content.bounds.height - 8
-            menu.popUp(positioning: nil, at: NSPoint(x: 16, y: y), in: content)
-        }
-    }
 
     /// Debounced current-section tracking off the reading view's top-most
     /// block. Called by the native reader as its visible block changes.
@@ -566,20 +537,6 @@ private final class WindowCloseDelegate: NSObject, NSWindowDelegate {
 
     nonisolated override func forwardingTarget(for aSelector: Selector!) -> Any? {
         forwardedDelegate?.responds(to: aSelector) == true ? forwardedDelegate : super.forwardingTarget(for: aSelector)
-    }
-}
-
-/// Routes an `NSMenuItem`'s action back to a Swift closure, carrying the
-/// heading id in the item's `representedObject`. One instance backs the whole
-/// outline menu; it's retained for the life of the synchronous `popUp`.
-@MainActor
-final class OutlineMenuTarget: NSObject {
-    private let handler: (String) -> Void
-    init(_ handler: @escaping (String) -> Void) { self.handler = handler }
-
-    @objc func fire(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? String else { return }
-        handler(id)
     }
 }
 

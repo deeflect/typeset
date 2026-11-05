@@ -30,7 +30,8 @@ public struct Theme: Equatable, Sendable {
     public var contentMaxWidth: CGFloat { 680 }
     /// Minimum side gutter once the window is narrower than the measure (board 09).
     public var contentHorizontalPadding: CGFloat { 28 }
-    public var contentTopPadding: CGFloat { 40 }
+    /// Top and bottom inset (textContainerInset is symmetric); the source editor matches it.
+    public var contentTopPadding: CGFloat { 64 }
 
     // MARK: - Semantic colors
 
@@ -43,6 +44,8 @@ public struct Theme: Equatable, Sendable {
 
     /// Board `hairline`: #E3E3E6 / #3A3A3C.
     public var hairline: Color { isDark ? Color(hex: 0x3A3A3C) : Color(hex: 0xE3E3E6) }
+    /// Board `sidebar`: welcome recents pane and neutral banners. #EEEEEF / #252527.
+    public var sidebar: Color { isDark ? Color(hex: 0x252527) : Color(hex: 0xEEEEEF) }
     /// Board `fill`: code cards and the blocked-image card. #F2F2F4 / #2C2C2E.
     public var codeCardFill: Color { isDark ? Color(hex: 0x2C2C2E) : Color(hex: 0xF2F2F4) }
     /// Neutral chip under inline code, never accent-tinted so it can't read as selection.
@@ -50,8 +53,10 @@ public struct Theme: Equatable, Sendable {
         isDark ? Color(white: 1.0, opacity: 0.11) : Color(white: 0.0, opacity: 0.055)
     }
     public var inlineCodeText: Color { textPrimary }
-    /// Quote bar and table header rule: system gray 4 (#D1D1D6 light).
-    public var quoteBar: Color { Color(nsColor: .systemGray4) }
+    /// Quote bar and table header rule: #D1D1D6 / #48484A.
+    public var quoteBar: Color { isDark ? Color(hex: 0x48484A) : Color(hex: 0xD1D1D6) }
+    /// Unchecked task box stroke: #C7C7CC / #636366.
+    public var checkboxStroke: Color { isDark ? Color(hex: 0x636366) : Color(hex: 0xC7C7CC) }
     public var tableHeaderRule: Color { quoteBar }
     public var tableStroke: Color { hairline }
 

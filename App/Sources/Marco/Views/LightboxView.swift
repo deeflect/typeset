@@ -52,7 +52,7 @@ struct LightboxView: View {
                             .frame(width: 28, height: 28)
                             .background(.white.opacity(0.14), in: Circle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(PressableButtonStyle())
                     .keyboardShortcut(.cancelAction)
                     .help("Close (Esc)")
                 }

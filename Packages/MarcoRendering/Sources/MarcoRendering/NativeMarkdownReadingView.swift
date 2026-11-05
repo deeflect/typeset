@@ -53,9 +53,13 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
         view.usesFindBar = true
         view.isVerticallyResizable = true
         view.isHorizontallyResizable = false
+        // Default maxSize is the initial frame, which caps the document at one viewport and blocks scrolling to the end.
+        view.minSize = .zero
+        view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         view.autoresizingMask = [NSView.AutoresizingMask.width]
         view.textContainerInset = NSSize(width: theme.contentHorizontalPadding, height: theme.contentTopPadding)
         view.backgroundColor = NSColor(theme.background)
+        view.linkTextAttributes = [.foregroundColor: NSColor(theme.linkColor), .cursor: NSCursor.pointingHand]
         view.delegate = context.coordinator
         view.coordinator = context.coordinator
         let scroll = NSScrollView()
@@ -146,6 +150,9 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
         private var reportedVisibleID: String?
         private var hasReportedVisible = false
         private var visibleNotificationScheduled = false
+        private var measure: CGFloat = 680
+        private var minimumGutter: CGFloat = 28
+        private var pulseToken = 0
 
         fileprivate func attach(view: ReadingTextView, scroll: NSScrollView, controller: Controller) {
             self.view = view
@@ -172,6 +179,11 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
             onCodeCopied = input.onCodeCopied
             let old = document
             let changed = old?.attributedString !== input.document.attributedString
+            if measure != input.theme.contentMaxWidth || minimumGutter != input.theme.contentHorizontalPadding {
+                measure = input.theme.contentMaxWidth
+                minimumGutter = input.theme.contentHorizontalPadding
+                resized()
+            }
             view.backgroundColor = NSColor(input.theme.background)
             scroll.backgroundColor = NSColor(input.theme.background)
             guard changed else { return }
@@ -184,6 +196,8 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
             let oldY = oldGlyph.flatMap { view.layoutManager?.boundingRect(forGlyphRange: $0, in: view.textContainer!).minY } ?? 0
             let pixelOffset = view.visibleRect.minY - oldY
             cancelImages()
+            pulseToken += 1
+            view.ticks = []
             document = input.document
             if let old {
                 let splice = input.document.replacementRanges(from: old)
@@ -277,22 +291,27 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
             onCheckbox(task.blockStartLine, task.lineOffset, !task.checked)
             return true
         }
-        fileprivate func copyCode(at index: Int) -> Bool {
-            guard let code = view?.textStorage?.attribute(.marcoCopy, at: index, effectiveRange: nil) as? String else { return false }
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(code, forType: .string)
-            onCodeCopied?()
-            return true
+
+        /// Board 04: a 3 pt accent tick in the left gutter beside each changed block, held 2 s, then faded.
+        fileprivate func pulse(blockIDs: Set<String>) {
+            guard let view, let document else { return }
+            let ranges = document.blockRanges.filter { blockIDs.contains($0.id) }.map(\.range)
+            guard !ranges.isEmpty else { return }
+            pulseToken += 1
+            let token = pulseToken
+            view.ticks = ranges.map { ($0, 1) }
+            view.needsDisplay = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.fadeTicks(token, step: 1) }
         }
 
-        fileprivate func pulse(blockIDs: Set<String>) {
-            guard let layout = view?.layoutManager, let document else { return }
-            let ranges = document.blockRanges.filter { blockIDs.contains($0.id) }.map(\.range)
-            let token = generation
-            for range in ranges { layout.addTemporaryAttribute(.backgroundColor, value: NSColor.controlAccentColor.withAlphaComponent(0.18), forCharacterRange: range) }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self, weak layout] in
-                guard let self, self.generation == token, let layout else { return }
-                for range in ranges { layout.removeTemporaryAttribute(.backgroundColor, forCharacterRange: range) }
+        private func fadeTicks(_ token: Int, step: Int) {
+            guard token == pulseToken, let view else { return }
+            let steps = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 1 : 10
+            let alpha = 1 - CGFloat(step) / CGFloat(steps)
+            view.ticks = alpha <= 0 ? [] : view.ticks.map { ($0.range, alpha) }
+            view.needsDisplay = true
+            if alpha > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { [weak self] in self?.fadeTicks(token, step: step + 1) }
             }
         }
 
@@ -312,8 +331,16 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
                 guard range.location >= top, range.location <= bottom, loadedImageLocations.insert(range.location).inserted else { continue }
                 let task = Task { [weak self] in
                     let decoded = await NativeMarkdownImages.load(url)
-                    guard let self, self.generation == current, decoded.image != nil, let view = self.view,
+                    guard let self, self.generation == current, let view = self.view,
                           range.location < (view.textStorage?.length ?? 0) else { return }
+                    guard decoded.image != nil else {
+                        let blocked = await Task.detached { FolderAccessStore.isAccessDenied(at: url) }.value
+                        guard self.generation == current,
+                              let cell = (view.textStorage?.attribute(.attachment, at: range.location, effectiveRange: nil) as? NSTextAttachment)?.attachmentCell as? ImagePlaceholderCell else { return }
+                        cell.loadState = blocked ? .blocked : .missing
+                        view.layoutManager?.invalidateDisplay(forCharacterRange: range)
+                        return
+                    }
                     self.loadedImages[range.location] = decoded
                     let width = max(120, view.textContainer?.containerSize.width ?? 600)
                     let attachment = NativeMarkdownImages.attachment(for: decoded, maxWidth: width)
@@ -352,8 +379,8 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
         }
         @objc private func resized() {
             guard let view, let scroll else { return }
-            let inset = max(0, (scroll.contentView.bounds.width - 720) / 2)
-            view.textContainerInset = NSSize(width: inset + 24, height: view.textContainerInset.height)
+            let inset = max(minimumGutter, (scroll.contentView.bounds.width - measure) / 2)
+            view.textContainerInset = NSSize(width: inset, height: view.textContainerInset.height)
             let width = max(120, view.textContainer?.containerSize.width ?? 600)
             for (location, image) in loadedImages where location < (view.textStorage?.length ?? 0) {
                 view.textStorage?.addAttribute(.attachment, value: NativeMarkdownImages.attachment(for: image, maxWidth: width), range: NSRange(location: location, length: 1))
@@ -377,35 +404,120 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
 
 private final class ReadingTextView: NSTextView {
     weak var coordinator: NativeMarkdownReadingView.Coordinator?
-    private var contextCode: String?
+    /// Change ticks (character range, opacity), drawn in the left gutter.
+    var ticks: [(range: NSRange, alpha: CGFloat)] = []
+    private var contextCodeIndex: Int?
     private var contextTaskIndex: Int?
+    private weak var hoveredCopyBlock: MarcoTextBlock?
+    private weak var copiedBlock: MarcoTextBlock?
+    private var copyGeneration = 0
+    private var hoverArea: NSTrackingArea?
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         window?.acceptsMouseMovedEvents = true
     }
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard !ticks.isEmpty, let layout = layoutManager, let container = textContainer, let length = textStorage?.length else { return }
+        let origin = textContainerOrigin
+        for tick in ticks where NSMaxRange(tick.range) <= length {
+            let content = NSRange(location: tick.range.location, length: max(0, tick.range.length - 1))
+            let glyphs = layout.glyphRange(forCharacterRange: content, actualCharacterRange: nil)
+            let bounds = layout.boundingRect(forGlyphRange: glyphs, in: container)
+            let rect = NSRect(x: origin.x - 24, y: origin.y + bounds.minY + 3, width: 3, height: max(6, bounds.height - 6))
+            guard rect.intersects(dirtyRect) else { continue }
+            NSColor.controlAccentColor.withAlphaComponent(tick.alpha).setFill()
+            NSBezierPath(roundedRect: rect, xRadius: 1.5, yRadius: 1.5).fill()
+        }
+    }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        guard hoverArea == nil else { return }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        hoverArea = area
+    }
     override func mouseMoved(with event: NSEvent) {
-        let index = characterIndexForInsertion(at: convert(event.locationInWindow, from: nil))
-        (coordinator?.isActionable(at: index) == true ? NSCursor.pointingHand : NSCursor.iBeam).set()
+        let point = convert(event.locationInWindow, from: nil)
+        let index = characterIndexForInsertion(at: point)
+        let copy = copyButton(at: point)
+        setHoveredCopy(copy)
+        // Code card bodies select like text; only their Copy label is a button.
+        let actionable = copy != nil || (codeBlock(at: index) == nil && coordinator?.isActionable(at: index) == true)
+        (actionable ? NSCursor.pointingHand : NSCursor.iBeam).set()
         super.mouseMoved(with: event)
+    }
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        setHoveredCopy(nil)
     }
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        if let copy = copyButton(at: point) { copyCode(at: copy.range.location); return }
         let index = characterIndexForInsertion(at: point)
         if coordinator?.click(at: index) == true { return }
         super.mouseDown(with: event)
         let now = window?.mouseLocationOutsideOfEventStream ?? event.locationInWindow
         let moved = hypot(now.x - event.locationInWindow.x, now.y - event.locationInWindow.y) > 4
         if !moved, selectedRange().length <= 1, event.clickCount == 1 {
-            if coordinator?.openImage(at: index) != true { _ = coordinator?.copyCode(at: index) }
+            if coordinator?.openImage(at: index) != true, codeBlock(at: index) == nil { copyCode(at: index) }
+        }
+    }
+
+    // MARK: Code card Copy label
+
+    /// The code card holding `index`, its character range and its frame in view coordinates.
+    private func codeBlock(at index: Int) -> (block: MarcoTextBlock, range: NSRange, frame: NSRect)? {
+        guard let layout = layoutManager, let storage = textStorage, storage.length > 0 else { return nil }
+        let index = min(index, storage.length - 1)
+        guard let style = storage.attribute(.paragraphStyle, at: index, effectiveRange: nil) as? NSParagraphStyle,
+              let block = style.textBlocks.first as? MarcoTextBlock, case .code = block.kind else { return nil }
+        let range = storage.range(of: block, at: index)
+        let glyphs = layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        let frame = layout.boundsRect(for: block, glyphRange: glyphs).offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+        return (block, range, frame)
+    }
+    private func copyButton(at point: NSPoint) -> (block: MarcoTextBlock, range: NSRange, frame: NSRect)? {
+        // The label sits in the card's top padding, which maps to the newline just before the card.
+        let index = characterIndexForInsertion(at: point)
+        for candidate in [index, index + 1] {
+            if let hit = codeBlock(at: candidate), hit.block.copyHitRect(inFrame: hit.frame).contains(point) { return hit }
+        }
+        return nil
+    }
+    private func setHoveredCopy(_ hit: (block: MarcoTextBlock, range: NSRange, frame: NSRect)?) {
+        guard hit?.block !== hoveredCopyBlock else { return }
+        if let old = hoveredCopyBlock, old.copyState == .hover { old.copyState = .idle }
+        hoveredCopyBlock = hit?.block
+        if let block = hit?.block, block.copyState == .idle { block.copyState = .hover }
+        setNeedsDisplay(visibleRect)
+    }
+    /// Code cards confirm in place ("Copied" for 1.5 s); inline code has no label, so the window shows its toast.
+    private func copyCode(at index: Int) {
+        guard let storage = textStorage, index < storage.length,
+              let code = storage.attribute(.marcoCopy, at: index, effectiveRange: nil) as? String else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(code, forType: .string)
+        guard let block = codeBlock(at: index)?.block else { coordinator?.codeCopied(); return }
+        if let old = copiedBlock, old !== block { old.copyState = old === hoveredCopyBlock ? .hover : .idle }
+        block.copyState = .copied
+        copiedBlock = block
+        copyGeneration &+= 1
+        let generation = copyGeneration
+        setNeedsDisplay(visibleRect)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self, generation == self.copyGeneration, let block = self.copiedBlock else { return }
+            block.copyState = block === self.hoveredCopyBlock ? .hover : .idle
+            self.setNeedsDisplay(self.visibleRect)
         }
     }
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
         let index = characterIndexForInsertion(at: point)
         let menu = super.menu(for: event) ?? NSMenu()
-        if let code = textStorage?.attribute(.marcoCopy, at: index, effectiveRange: nil) as? String {
-            contextCode = code
-            menu.insertItem(withTitle: "Copy Code", action: #selector(copyCode), keyEquivalent: "", at: 0).target = self
+        if textStorage?.attribute(.marcoCopy, at: index, effectiveRange: nil) is String {
+            contextCodeIndex = index
+            menu.insertItem(withTitle: "Copy Code", action: #selector(copyCodeFromMenu), keyEquivalent: "", at: 0).target = self
         }
         if coordinator?.checkbox(at: index) != nil {
             contextTaskIndex = index
@@ -421,21 +533,24 @@ private final class ReadingTextView: NSTextView {
         if event.charactersIgnoringModifiers == " ", coordinator?.toggleTask(at: selectedRange().location) == true { return }
         super.keyDown(with: event)
     }
-    @objc private func copyCode() {
-        guard let contextCode else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(contextCode, forType: .string)
-        coordinator?.codeCopied()
+    @objc private func copyCodeFromMenu() {
+        if let contextCodeIndex { copyCode(at: contextCodeIndex) }
     }
     override func copy(_ sender: Any?) {
         let selected = selectedRange()
         guard selected.length > 0, let textStorage else { return }
         let rich = textStorage.attributedSubstring(from: selected)
         let plain = NSMutableString(string: rich.string)
-        if let images = coordinator?.document?.images {
-            for image in images.reversed() where NSLocationInRange(image.range.location, selected) {
-                plain.replaceCharacters(in: NSRange(location: image.range.location - selected.location, length: image.range.length), with: image.alt.isEmpty ? "Image" : image.alt)
-            }
+        // Drawn stand-ins (task boxes, images) are U+FFFC in the text; give plain text words for them.
+        var replacements: [(NSRange, String)] = []
+        for image in coordinator?.document?.images ?? [] where NSLocationInRange(image.range.location, selected) {
+            replacements.append((image.range, image.alt.isEmpty ? "Image" : image.alt))
+        }
+        for box in coordinator?.document?.checkboxes ?? [] where NSLocationInRange(box.range.location, selected) {
+            replacements.append((NSRange(location: box.range.location, length: min(box.range.length, NSMaxRange(selected) - box.range.location)), box.checked ? "[x] " : "[ ] "))
+        }
+        for (range, text) in replacements.sorted(by: { $0.0.location > $1.0.location }) {
+            plain.replaceCharacters(in: NSRange(location: range.location - selected.location, length: range.length), with: text)
         }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()

@@ -25,7 +25,7 @@ enum SnapshotRunner {
             }
             if variant == "empty" {
                 RecentDocumentsStore.shared.seedForSnapshot([url])
-                let renderer = ImageRenderer(content: EmptyStateView(forceOpaque: true).frame(width: width, height: 640))
+                let renderer = ImageRenderer(content: EmptyStateView().frame(width: width, height: 460))
                 renderer.scale = 2
                 if let image = renderer.cgImage { write(image, to: "\(output)/\(basename)-empty.png") }
                 return

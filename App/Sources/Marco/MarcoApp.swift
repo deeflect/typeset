@@ -21,9 +21,8 @@ struct MarcoApp: App {
         } defaultValue: {
             nil
         }
-        .windowStyle(.hiddenTitleBar)
-        .windowToolbarStyle(.unified(showsTitle: false))
-        .defaultSize(width: 820, height: 1040)
+        .windowToolbarStyle(.unified)
+        .defaultSize(width: 1200, height: 820)
         .windowResizability(.contentMinSize)
         // Scene restoration brought every window from the last session back
         // as an *empty* one: the restored `URL` values are stale outside the

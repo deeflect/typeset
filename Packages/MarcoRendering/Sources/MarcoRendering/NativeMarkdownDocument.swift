@@ -12,6 +12,8 @@ public struct NativeMarkdownDocument: @unchecked Sendable {
         let renderedText: String
         let links: [String]
         let images: [String]
+        /// Drawn state that isn't in the text: task checks, code-card language.
+        let marks: [String]
     }
     public struct Checkbox {
         public let range: NSRange
@@ -62,12 +64,14 @@ public struct NativeMarkdownDocument: @unchecked Sendable {
             let metadata = normalized.split(separator: "\n", omittingEmptySubsequences: false).prefix(lineOffset).dropFirst().dropLast().joined(separator: "\n")
             if let block = blocks.first, block.kind == .frontmatter {
                 let start = writer.output.length
+                let p = writer.style(writer.bodyFont, lineHeight: theme.bodyLineHeight, after: metadataExpanded ? 4 : 16)
                 writer.append(metadataExpanded ? "Metadata ▾" : "Metadata ▸", font: writer.bodyFont, color: writer.secondary, extras: [.marcoMetadata: true])
+                writer.endParagraph(from: start, style: p)
                 if metadataExpanded, !metadata.isEmpty {
-                    writer.endBlock()
+                    let body = writer.output.length
                     writer.append(metadata, font: writer.bodyFont, color: writer.secondary)
+                    writer.endParagraph(from: body, style: writer.style(writer.bodyFont, lineHeight: theme.bodyLineHeight))
                 }
-                writer.endBlock()
                 writer.record(block: block, sourceLine: -1, start: start)
             }
         }
@@ -95,7 +99,7 @@ public struct NativeMarkdownDocument: @unchecked Sendable {
         }
         func matches(_ oldIndex: Int, _ newIndex: Int) -> Bool {
             let a = old.blockRanges[oldIndex], b = blockRanges[newIndex]
-            return a.id == b.id && a.renderedText == b.renderedText && a.links == b.links && a.images == b.images
+            return a.id == b.id && a.renderedText == b.renderedText && a.links == b.links && a.images == b.images && a.marks == b.marks
         }
         var prefix = 0
         while prefix < min(old.blockRanges.count, blockRanges.count), matches(prefix, prefix) { prefix += 1 }
@@ -140,6 +144,8 @@ private struct Writer {
     var codeRanges: [NativeMarkdownDocument.CodeRange] = []
     var bodyFont: NSFont { .systemFont(ofSize: theme.bodySize * theme.scale) }
     var secondary: NSColor { .secondaryLabelColor }
+    /// List and nested-block indent step: 16 pt box + 10 pt gap.
+    let indentStep: CGFloat = 26
 
     mutating func record(block: Block, sourceLine: Int, start: Int) {
         let range = NSRange(location: start, length: output.length - start)
@@ -148,7 +154,9 @@ private struct Writer {
             if let url = value as? URL { links.append("\(part.location - start):\(part.length):\(url.absoluteString)") }
         }
         let imageValues = images.filter { NSLocationInRange($0.range.location, range) }.map { "\($0.range.location - start):\($0.alt):\($0.url?.absoluteString ?? "")" }
-        ranges.append(.init(id: block.id, sourceLine: sourceLine, range: range, renderedText: output.attributedSubstring(from: range).string, links: links, images: imageValues))
+        let marks = checkboxes.filter { NSLocationInRange($0.range.location, range) }.map { $0.checked ? "x" : "o" }
+            + codeRanges.filter { NSLocationInRange($0.range.location, range) }.map { "code:\($0.language ?? "")" }
+        ranges.append(.init(id: block.id, sourceLine: sourceLine, range: range, renderedText: output.attributedSubstring(from: range).string, links: links, images: imageValues, marks: marks))
     }
 
     mutating func append(_ text: String, font: NSFont, color: NSColor = .labelColor, paragraph: NSParagraphStyle? = nil, extras: [NSAttributedString.Key: Any] = [:]) {
@@ -158,95 +166,169 @@ private struct Writer {
         output.append(NSAttributedString(string: text, attributes: attrs))
     }
 
-    mutating func endBlock() { append("\n", font: bodyFont) }
+    /// CSS-style line height: the extra over the font's natural height goes below each line,
+    /// so `after` plus that extra reproduces the board's block gap.
+    func style(_ font: NSFont, lineHeight: CGFloat, before: CGFloat = 0, after: CGFloat = 16, indent: CGFloat = 0, head: CGFloat? = nil) -> NSMutableParagraphStyle {
+        let p = NSMutableParagraphStyle()
+        p.lineSpacing = max(0, theme.scaled(lineHeight) - ceil(font.ascender - font.descender + font.leading))
+        p.paragraphSpacingBefore = theme.scaled(before)
+        p.paragraphSpacing = theme.scaled(after)
+        p.firstLineHeadIndent = theme.scaled(indent)
+        p.headIndent = theme.scaled(head ?? indent)
+        return p
+    }
+
+    /// Ends the paragraph begun at `start`. A paragraph that continues a list marker keeps the marker's style.
+    mutating func endParagraph(from start: Int, style: NSParagraphStyle, font: NSFont? = nil) {
+        append("\n", font: font ?? bodyFont)
+        let range = NSRange(location: start, length: output.length - start)
+        if start > 0, output.mutableString.character(at: start - 1) != 10,
+           let marker = output.attribute(.paragraphStyle, at: start - 1, effectiveRange: nil) {
+            output.addAttribute(.paragraphStyle, value: marker, range: range)
+        } else {
+            output.addAttribute(.paragraphStyle, value: style, range: range)
+        }
+    }
+
+    mutating func updateStyles(in range: NSRange, _ change: (NSMutableParagraphStyle) -> Void) {
+        var runs: [(NSRange, NSParagraphStyle?)] = []
+        output.enumerateAttribute(.paragraphStyle, in: range) { value, run, _ in runs.append((run, value as? NSParagraphStyle)) }
+        for (run, value) in runs {
+            let p = (value?.mutableCopy() as? NSMutableParagraphStyle) ?? NSMutableParagraphStyle()
+            change(p)
+            output.addAttribute(.paragraphStyle, value: p, range: run)
+        }
+    }
+
+    mutating func setSpacingAfterLastParagraph(in range: NSRange, _ value: CGFloat) {
+        guard range.length > 0 else { return }
+        let last = output.mutableString.paragraphRange(for: NSRange(location: NSMaxRange(range) - 1, length: 0))
+        updateStyles(in: NSIntersectionRange(last, range)) { $0.paragraphSpacing = value }
+    }
+
+    /// Steps body-colored text back to secondary (quotes, finished tasks); links keep the accent.
+    mutating func dim(_ range: NSRange) {
+        var runs: [NSRange] = []
+        output.enumerateAttribute(.foregroundColor, in: range) { value, run, _ in
+            if (value as? NSColor) == .labelColor { runs.append(run) }
+        }
+        for run in runs { output.addAttribute(.foregroundColor, value: secondary, range: run) }
+    }
 
     mutating func renderBlock(_ node: any Markup, blockStartLine: Int, depth: Int) {
+        let indent = CGFloat(depth) * indentStep
         switch node {
         case let heading as Heading:
-            let sizes: [CGFloat] = [30, 23, 18.5, 15.5, 13.5, 12]
-            let size = sizes[min(max(heading.level, 1), 6) - 1] * theme.scale
+            let level = min(max(heading.level, 1), 6)
+            // size, line height, space above, space below, tracking (em)
+            let specs: [(CGFloat, CGFloat, CGFloat, CGFloat, CGFloat)] = [
+                (32, 38, 0, 20, -0.02), (22, 28, 16, 16, -0.01), (18, 24, 8, 16, 0),
+                (16, 24, 8, 12, 0), (14, 20, 8, 12, 0), (13, 18, 8, 12, 0)]
+            let (size, lineHeight, before, after, tracking) = specs[level - 1]
+            let font = NSFont.systemFont(ofSize: size * theme.scale, weight: .semibold)
             let start = output.length
-            renderInline(heading, font: .boldSystemFont(ofSize: size))
-            let p = NSMutableParagraphStyle()
-            p.paragraphSpacingBefore = theme.scaled(heading.level == 1 ? 8 : 20)
-            p.paragraphSpacing = theme.scaled(heading.level == 1 ? 12 : 8)
-            if output.length > start { output.addAttribute(.paragraphStyle, value: p, range: NSRange(location: start, length: output.length - start)) }
-            endBlock()
+            renderInline(heading, font: font, color: level < 5 ? .labelColor : (level == 5 ? secondary : .tertiaryLabelColor))
+            if tracking != 0, output.length > start {
+                output.addAttribute(.kern, value: size * theme.scale * tracking, range: NSRange(location: start, length: output.length - start))
+            }
+            endParagraph(from: start, style: style(font, lineHeight: lineHeight, before: before, after: after, indent: indent), font: font)
         case let code as CodeBlock:
-            let p = NSMutableParagraphStyle()
-            p.paragraphSpacing = theme.scaled(12)
-            p.headIndent = theme.scaled(12)
-            p.firstLineHeadIndent = p.headIndent
+            let mono = NSFont.monospacedSystemFont(ofSize: 13.5 * theme.scale, weight: .regular)
+            let block = MarcoTextBlock(.code(language: code.language), color: NSColor(theme.codeCardFill), scale: theme.scale)
+            block.setWidth(theme.scaled(indent), type: .absoluteValueType, for: .margin, edge: .minX)
+            let p = style(mono, lineHeight: 21, after: 0)
+            p.textBlocks = [block]
             let text = code.code.hasSuffix("\n") ? String(code.code.dropLast()) : code.code
             let start = output.length
-            append(text, font: .monospacedSystemFont(ofSize: 13 * theme.scale, weight: .regular), paragraph: p, extras: [.marcoCopy: text])
+            append(text, font: mono, paragraph: p, extras: [.marcoCopy: text])
             codeRanges.append(.init(range: NSRange(location: start, length: output.length - start), code: text, language: code.language))
-            endBlock()
+            append("\n", font: mono, paragraph: p)
         case is OrderedList, is UnorderedList:
             let ordered = node as? OrderedList
+            let listStart = output.length
             for (index, child) in node.children.enumerated() {
                 guard let item = child as? ListItem else { continue }
-                let marker = ordered.map { "\(Int($0.startIndex) + index). " } ?? "• "
-                let checked = item.checkbox != nil
+                let p = style(bodyFont, lineHeight: theme.bodyLineHeight, after: 6, indent: indent, head: indent + indentStep)
+                p.tabStops = [NSTextTab(textAlignment: .left, location: theme.scaled(indent + indentStep))]
                 let start = output.length
-                let p = NSMutableParagraphStyle()
-                p.firstLineHeadIndent = theme.scaled(CGFloat(depth) * 24)
-                p.headIndent = p.firstLineHeadIndent + theme.scaled(24)
-                p.paragraphSpacing = theme.scaled(4)
-                append(checked ? (item.checkbox == .checked ? "☑ " : "☐ ") : marker, font: bodyFont, color: secondary, paragraph: p)
-                if checked, let line = item.range?.lowerBound.line {
-                    checkboxes.append(.init(range: NSRange(location: start, length: (output.length - start)), blockStartLine: blockStartLine, lineOffset: line - 1 - blockStartLine, checked: item.checkbox == .checked))
+                if let box = item.checkbox {
+                    let attachment = NSTextAttachment()
+                    attachment.attachmentCell = CheckboxCell(checked: box == .checked, side: theme.scaled(16), stroke: NSColor(theme.checkboxStroke))
+                    append("\u{FFFC}", font: bodyFont, paragraph: p, extras: [.attachment: attachment])
+                    append("\t", font: bodyFont, paragraph: p)
+                    if let line = item.range?.lowerBound.line {
+                        checkboxes.append(.init(range: NSRange(location: start, length: output.length - start), blockStartLine: blockStartLine, lineOffset: line - 1 - blockStartLine, checked: box == .checked))
+                    }
+                } else {
+                    append(ordered.map { "\(Int($0.startIndex) + index).\t" } ?? "\u{2022}\t", font: bodyFont, color: secondary, paragraph: p)
                 }
+                let contentStart = output.length
                 for content in item.children {
                     renderBlock(content, blockStartLine: blockStartLine, depth: depth + 1)
                 }
+                if item.checkbox == .checked { dim(NSRange(location: contentStart, length: output.length - contentStart)) }
             }
+            if depth == 0 { setSpacingAfterLastParagraph(in: NSRange(location: listStart, length: output.length - listStart), theme.scaled(16)) }
         case let table as Markdown.Table:
             renderTable(table)
         case let quote as BlockQuote:
+            let start = output.length
             for child in quote.children {
-                append("│ ", font: bodyFont, color: secondary)
-                renderBlock(child, blockStartLine: blockStartLine, depth: depth + 1)
+                renderBlock(child, blockStartLine: blockStartLine, depth: depth)
             }
-        case let code as InlineCode:
-            append(code.code, font: .monospacedSystemFont(ofSize: theme.inlineCodeSize * theme.scale, weight: .regular), extras: [.backgroundColor: NSColor(theme.inlineCodeFill), .marcoCopy: code.code])
+            let range = NSRange(location: start, length: output.length - start)
+            let block = MarcoTextBlock(.quote, color: NSColor(theme.quoteBar), scale: theme.scale)
+            block.setWidth(theme.scaled(indent), type: .absoluteValueType, for: .margin, edge: .minX)
+            updateStyles(in: range) { $0.textBlocks = [block] + $0.textBlocks }
+            setSpacingAfterLastParagraph(in: range, 0)
+            dim(range)
         case let html as HTMLBlock:
-            append(html.rawHTML, font: .monospacedSystemFont(ofSize: 12 * theme.scale, weight: .regular), color: secondary)
-            endBlock()
+            let mono = NSFont.monospacedSystemFont(ofSize: 12 * theme.scale, weight: .regular)
+            let start = output.length
+            append(html.rawHTML.hasSuffix("\n") ? String(html.rawHTML.dropLast()) : html.rawHTML, font: mono, color: secondary)
+            endParagraph(from: start, style: style(mono, lineHeight: 18, indent: indent), font: mono)
         case is ThematicBreak:
-            append("────────", font: bodyFont, color: secondary)
-            endBlock()
+            let p = style(bodyFont, lineHeight: 9, after: 0)
+            p.textBlocks = [MarcoTextBlock(.rule, color: NSColor(theme.tableStroke), scale: theme.scale)]
+            append("\u{00A0}\n", font: bodyFont, paragraph: p)
         default:
             let start = output.length
             renderInline(node, font: bodyFont)
-            if output.length > start {
-                let p = NSMutableParagraphStyle()
-                p.firstLineHeadIndent = theme.scaled(CGFloat(depth) * 24)
-                p.headIndent = p.firstLineHeadIndent
-                p.paragraphSpacing = theme.scaled(9)
-                p.lineSpacing = theme.bodyLineSpacing
-                output.addAttribute(.paragraphStyle, value: p, range: NSRange(location: start, length: output.length - start))
-            }
-            endBlock()
+            endParagraph(from: start, style: style(bodyFont, lineHeight: theme.bodyLineHeight, indent: indent))
         }
     }
 
     mutating func renderTable(_ table: Markdown.Table) {
         let rows: [any Markup] = [table.head] + Array(table.body.rows)
+        let columns = max(1, table.maxColumnCount)
+        // Fixed layout keeps 10k-row tables fast; column shares come from content length instead.
+        var weights = Array(repeating: 4.0, count: columns)
+        for row in rows.prefix(200) {
+            for (column, cell) in row.children.enumerated() where column < columns {
+                weights[column] = max(weights[column], min(40, Double((cell as? Markdown.Table.Cell)?.plainText.count ?? 0)))
+            }
+        }
+        let total = weights.reduce(0, +)
+        let headFont = NSFont.systemFont(ofSize: 14 * theme.scale, weight: .semibold)
+        let cellFont = NSFont.systemFont(ofSize: 14 * theme.scale)
         var native = NSTextTable()
         for (rowIndex, row) in rows.enumerated() {
             if rowIndex.isMultiple(of: 200) {
                 native = NSTextTable()
-                native.numberOfColumns = table.maxColumnCount
+                native.numberOfColumns = columns
                 native.layoutAlgorithm = .fixedLayoutAlgorithm
                 native.setContentWidth(100, type: .percentageValueType)
             }
+            let font = rowIndex == 0 ? headFont : cellFont
             for (column, cell) in row.children.enumerated() {
                 let block = NSTextTableBlock(table: native, startingRow: rowIndex % 200, rowSpan: 1, startingColumn: column, columnSpan: 1)
-                block.setBorderColor(NSColor(theme.tableStroke))
-                block.setWidth(0.5, type: .absoluteValueType, for: .border)
-                if rowIndex == 0 { block.backgroundColor = NSColor(theme.tableHeaderFill) }
-                let p = NSMutableParagraphStyle()
+                if column < columns { block.setValue(CGFloat(weights[column] / total * 100), type: .percentageValueType, for: .width) }
+                block.setWidth(theme.scaled(8), type: .absoluteValueType, for: .padding, edge: .minY)
+                block.setWidth(theme.scaled(8), type: .absoluteValueType, for: .padding, edge: .maxY)
+                block.setWidth(theme.scaled(12), type: .absoluteValueType, for: .padding, edge: .maxX)
+                block.setWidth(1, type: .absoluteValueType, for: .border, edge: .maxY)
+                block.setBorderColor(NSColor(rowIndex == 0 ? theme.tableHeaderRule : theme.tableStroke), for: .maxY)
+                let p = style(font, lineHeight: 20, after: 0)
                 p.textBlocks = [block]
                 if column < table.columnAlignments.count {
                     switch table.columnAlignments[column] {
@@ -256,13 +338,17 @@ private struct Writer {
                     }
                 }
                 let cellStart = output.length
-                renderInline(cell, font: rowIndex == 0 ? .boldSystemFont(ofSize: theme.bodySize * theme.scale) : bodyFont)
-                if output.length == cellStart { append(" ", font: bodyFont) }
+                renderInline(cell, font: font)
+                if output.length == cellStart { append(" ", font: font) }
                 output.addAttribute(.paragraphStyle, value: p, range: NSRange(location: cellStart, length: output.length - cellStart))
-                append("\n", font: bodyFont, paragraph: p)
+                append("\n", font: font, paragraph: p)
             }
         }
-        endBlock()
+        // Spacer paragraph: the block gap after the table.
+        let spacer = NSMutableParagraphStyle()
+        spacer.minimumLineHeight = theme.scaled(16)
+        spacer.maximumLineHeight = theme.scaled(16)
+        append("\n", font: .systemFont(ofSize: 1), paragraph: spacer)
     }
 
     mutating func renderInline(_ node: any Markup, font: NSFont, color: NSColor = .labelColor, link: URL? = nil) {
@@ -279,13 +365,16 @@ private struct Writer {
         if let html = node as? InlineHTML { append(html.rawHTML, font: font, color: secondary); return }
         if let image = node as? Markdown.Image {
             let alt = image.children.compactMap { ($0 as? Markdown.Text)?.string }.joined()
+            let url = resolvedURL(image.source)
             let start = output.length
             let attachment = NSTextAttachment()
-            attachment.attachmentCell = NSTextAttachmentCell(imageCell: NSImage(systemSymbolName: "photo", accessibilityDescription: alt.isEmpty ? "Image" : alt)!)
+            attachment.attachmentCell = ImagePlaceholderCell(
+                name: url?.lastPathComponent ?? (alt.isEmpty ? "Image" : alt),
+                fill: NSColor(theme.codeCardFill), stroke: NSColor(theme.hairline), scale: theme.scale)
             var extras: [NSAttributedString.Key: Any] = [.attachment: attachment]
             if let link { extras[.link] = link }
             append("\u{FFFC}", font: font, color: secondary, extras: extras)
-            images.append(.init(range: NSRange(location: start, length: output.length - start), url: resolvedURL(image.source), alt: alt))
+            images.append(.init(range: NSRange(location: start, length: output.length - start), url: url, alt: alt))
             return
         }
         var childFont = font

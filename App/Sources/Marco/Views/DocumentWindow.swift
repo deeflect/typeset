@@ -3,11 +3,10 @@ import MarcoCore
 import MarcoRendering
 import SwiftUI
 
-/// The reading window. Owns one `WindowModel` (history, outline dropdown, ⌘F
-/// session, scroll memory) which in turn holds the `DocumentReloadController`
-/// for whatever file is showing. The window itself is a thin renderer of that
-/// state: the reading/editor surface, with the headings outline reached from a
-/// native dropdown in the toolbar (⌘1) rather than a persistent side column.
+/// The reading window. Owns one `WindowModel` (history, outline, ⌘F session,
+/// scroll memory) which in turn holds the `DocumentReloadController` for
+/// whatever file is showing. The window is a thin renderer of that state:
+/// an optional outline sidebar (^⌘S) beside the reading/editor surface.
 struct DocumentWindow: View {
     let url: URL?
 
@@ -18,6 +17,8 @@ struct DocumentWindow: View {
     @State private var model = WindowModel()
     @State private var copied = false
     @State private var copyToken = 0
+    /// True for a minute after the file changes on disk ("Updated just now").
+    @State private var freshUpdate = false
 
     private var theme: Theme {
         Theme(colorScheme: colorScheme, scale: CGFloat(textScale))
@@ -40,11 +41,27 @@ struct DocumentWindow: View {
             // opening a second window for it).
             if model.currentURL == nil {
                 EmptyStateView()
+                    .ignoresSafeArea()
+                    .toolbar(removing: .title)
+                    .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+                    // Keeps the 52 pt unified toolbar so traffic lights sit where the document window has them.
+                    .toolbar { ToolbarItem(placement: .navigation) { Color.clear.frame(width: 1, height: 1) } }
             } else {
-                detailContent
+                NavigationSplitView(columnVisibility: Binding(
+                    get: { model.showsOutline ? .all : .detailOnly },
+                    set: { model.showsOutline = $0 != .detailOnly }
+                )) {
+                    OutlineSidebar(model: model)
+                        .navigationSplitViewColumnWidth(240)
+                } detail: {
+                    detailContent
+                        .toolbar { toolbarContent }
+                        .navigationTitle(model.currentURL?.lastPathComponent ?? Bundle.main.displayName)
+                        .navigationSubtitle(subtitle)
+                }
             }
         }
-        .frame(minWidth: 640, minHeight: 480)
+        .frame(minWidth: 520, minHeight: 400)
         .environment(\.theme, theme)
         .overlay {
             if let image = model.lightboxImage {
@@ -64,8 +81,11 @@ struct DocumentWindow: View {
             }
         }
         .animation(reduceMotion ? nil : Theme.Motion.state, value: textScale)
-        .animation(reduceMotion ? nil : Theme.Motion.state, value: model.controller?.hasExternalChanges)
-        .toolbar { toolbarContent }
+        .task(id: model.controller?.lastExternalChange) {
+            freshUpdate = model.controller?.lastExternalChange != nil
+            try? await Task.sleep(for: .seconds(60))
+            freshUpdate = false
+        }
         .background { WindowAccessor { model.window = $0 } }
         .focusedValue(\.windowModel, model)
         .onAppear { DocumentOpener.shared.register(model) }
@@ -86,7 +106,7 @@ struct DocumentWindow: View {
     private var detailContent: some View {
         if let controller = model.controller {
             contentArea(controller)
-                .overlay(alignment: .top) { topOverlays(controller) }
+                .safeAreaInset(edge: .top, spacing: 0) { banners(controller) }
         } else {
             Color.clear
         }
@@ -123,7 +143,7 @@ struct DocumentWindow: View {
                         onImageAccess: { folder in
                             if FolderAccessStore.shared.requestAccess(
                                 defaultDirectory: folder,
-                                message: "Allow \(Bundle.main.displayName) to open images in \u{201c}\(folder.lastPathComponent)\u{201d}."
+                                message: "Allow \(Bundle.main.displayName) to open images in \u{201c}\(folder.lastPathComponent)\u{201d}"
                             ) != nil { model.nativeReader.retryImages() }
                         },
                         onImageOpen: { model.lightboxImage = $0 },
@@ -144,123 +164,83 @@ struct DocumentWindow: View {
         }
     }
 
-    /// Find bar, conflict/save banners, and the quiet link-access hint —
-    /// stacked just under the toolbar, never modal (PLAN §4).
-    @ViewBuilder
-    private func topOverlays(_ controller: DocumentReloadController) -> some View {
-        VStack(spacing: 8) {
-            banners(controller)
-            if let hint = model.accessHint {
-                AccessHintBanner(
-                    message: hint,
-                    actionTitle: model.accessHintAction?.title,
-                    onAction: model.accessHintAction == nil ? nil : { model.grantAccessFromHint() },
-                    onDismiss: { model.dismissAccessHint() }
-                )
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
-        }
-        .padding(.top, 8)
-        .animation(reduceMotion ? nil : Theme.Motion.state, value: model.accessHint)
-    }
-
+    /// One inline banner at a time, most urgent first (PLAN §4: never modal).
     @ViewBuilder
     private func banners(_ controller: DocumentReloadController) -> some View {
-        if controller.conflictState == .conflictPending {
-            ConflictBanner(
-                onKeepMine: { controller.resolveConflictKeepMine() },
-                onTakeTheirs: { controller.resolveConflictTakeTheirs() }
-            )
-        } else if let saveError = controller.saveError {
-            SaveErrorBanner(
-                message: saveError,
-                onSaveAs: { saveAs() },
-                onDismiss: { controller.saveError = nil }
-            )
+        Group {
+            if controller.conflictState == .conflictPending {
+                InlineBanner(tone: .warn, symbol: "exclamationmark.triangle.fill",
+                             title: "\(fileName) changed on disk", message: "Your edits aren\u{2019}t saved") {
+                    Button("Keep Mine") { controller.resolveConflictKeepMine() }
+                    Button("Take Theirs") { controller.resolveConflictTakeTheirs() }
+                }
+            } else if let saveError = controller.saveError {
+                InlineBanner(tone: .warn, symbol: "exclamationmark.triangle.fill", title: saveError) {
+                    Button("Save As\u{2026}") { saveAs() }
+                    Button("Close") { controller.saveError = nil }
+                }
+            } else if controller.isFileRemoved, !model.removedBannerDismissed {
+                InlineBanner(tone: .warn, symbol: "exclamationmark.triangle.fill",
+                             title: "\(fileName) was moved or deleted",
+                             message: "Showing the last version loaded") {
+                    Button("Locate\u{2026}") { model.locateMovedFile() }
+                    Button("Close") { model.removedBannerDismissed = true }
+                }
+            } else if let hint = model.accessHint {
+                InlineBanner(tone: .neutral, symbol: "lock.fill", title: hint) {
+                    if let action = model.accessHintAction {
+                        Button(action.title) { model.grantAccessFromHint() }
+                    }
+                    Button("Close") { model.dismissAccessHint() }
+                }
+            }
         }
+        .animation(reduceMotion ? nil : Theme.Motion.state, value: model.accessHint)
+        .animation(reduceMotion ? nil : Theme.Motion.state, value: controller.isFileRemoved)
+    }
+
+    private var fileName: String { model.currentURL?.lastPathComponent ?? "This file" }
+
+    /// Toolbar subtitle (boards 01, 04, 06, 08): folder — parent by default.
+    private var subtitle: String {
+        guard let controller = model.controller, let url = model.currentURL else { return "" }
+        if controller.isFileRemoved { return "Not on disk" }
+        if controller.isEditing {
+            return controller.conflictState == .clean ? "Editing \u{b7} \u{2318}E to preview" : "Edited \u{b7} \u{2318}E to preview"
+        }
+        if freshUpdate { return "Updated just now" }
+        let folder = url.deletingLastPathComponent()
+        let parent = folder.deletingLastPathComponent().lastPathComponent
+        return parent.isEmpty || parent == "/" ? folder.lastPathComponent : "\(folder.lastPathComponent) \u{2014} \(parent)"
     }
 
     // MARK: - Toolbar
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        if model.history.count > 1 {
-            ToolbarItemGroup(placement: .navigation) {
-                Button { model.goBack() } label: { Image(systemName: "chevron.backward") }
-                    .disabled(!model.canGoBack)
-                    .help("Back (⌘[)")
-                Button { model.goForward() } label: { Image(systemName: "chevron.forward") }
-                    .disabled(!model.canGoForward)
-                    .help("Forward (⌘])")
-            }
-        }
-        if model.controller != nil {
-            ToolbarItem(placement: .navigation) {
-                Button { model.showOutlineMenu() } label: {
-                    Image(systemName: "list.bullet.indent")
-                        .frame(minWidth: 24, minHeight: 22)
-                        .background { OutlineAnchorAccessor { model.outlineAnchor = $0 } }
-                }
-                .disabled(!model.hasOutline)
-                .help(model.hasOutline ? "Outline (⌘1)" : "No headings to jump to")
-                .accessibilityLabel("Outline")
-            }
-        }
-        ToolbarItem(placement: .principal) {
-            HStack(spacing: 6) {
-                Text(model.currentURL?.lastPathComponent ?? Bundle.main.displayName)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if model.controller?.isFileRemoved == true {
-                    Text("· File Removed")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 3)
+        ToolbarItemGroup(placement: .navigation) {
+            Button { model.goBack() } label: { Image(systemName: "chevron.backward") }
+                .disabled(!model.canGoBack)
+                .help("Back (\u{2318}[)")
+            Button { model.goForward() } label: { Image(systemName: "chevron.forward") }
+                .disabled(!model.canGoForward)
+                .help("Forward (\u{2318}])")
         }
         if let controller = model.controller {
-            ToolbarItem(placement: .automatic) {
-                Button {
-                    model.openFind()
-                } label: {
-                    Image(systemName: "magnifyingglass")
-                        .frame(minWidth: 24, minHeight: 22)
-                }
-                .help("Find (⌘F)")
-                .accessibilityLabel("Find")
-                .disabled(!model.canFind)
-            }
-            ToolbarItem(placement: .automatic) {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button { model.openFind() } label: { Image(systemName: "magnifyingglass") }
+                    .help("Find (\u{2318}F)")
+                    .accessibilityLabel("Find")
+                    .disabled(!model.canFind)
                 Toggle(isOn: Binding(get: { controller.isEditing }, set: { _ in model.toggleEditMode() })) {
                     Image(systemName: "pencil")
-                        .frame(minWidth: 24, minHeight: 22)
                 }
                 .toggleStyle(.button)
                 .disabled(controller.isLoading || controller.loadError != nil)
-                .help(controller.isEditing ? "Done Editing (⌘E)" : "Edit Source (⌘E)")
+                .help(controller.isEditing ? "Done Editing (\u{2318}E)" : "Edit Source (\u{2318}E)")
                 .accessibilityLabel("Edit Source")
-            }
-            // Follow mode is contextual: hidden until the file first changes on
-            // disk (the only moment it's meaningful), then revealed with a
-            // quiet transition. The menu item (⌥⌘F) stays available regardless.
-            if controller.hasExternalChanges {
-                ToolbarItem(placement: .automatic) {
-                    Toggle(isOn: Binding(
-                        get: { controller.followModeEnabled },
-                        set: { controller.followModeEnabled = $0 }
-                    )) {
-                        Image(systemName: "text.line.last.and.arrowtriangle.forward")
-                            .frame(minWidth: 24, minHeight: 22)
-                    }
-                    .toggleStyle(.button)
-                    .help("Follow live changes — auto-scroll to the newest edit (⌥⌘F)")
-                    .accessibilityLabel("Follow Live Changes")
-                    .transition(.opacity)
-                }
+                ShareLink(item: controller.url) { Image(systemName: "square.and.arrow.up") }
+                    .help("Share")
             }
         }
     }
@@ -299,6 +279,7 @@ struct DocumentWindow: View {
             Text(message)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+                .frame(maxWidth: 520) // board 15
         }
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

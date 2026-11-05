@@ -97,11 +97,11 @@ struct MarcoCommands: Commands {
 
         // MARK: View — sidebar, edit mode, zoom, follow mode
         CommandGroup(after: .toolbar) {
-            Button("Outline") {
-                activeModel?.showOutlineMenu()
+            Button((activeModel?.showsOutline ?? false) ? "Hide Outline" : "Show Outline") {
+                activeModel?.showsOutline.toggle()
             }
-            .keyboardShortcut("1", modifiers: .command)
-            .disabled(!(activeModel?.hasOutline ?? false))
+            .keyboardShortcut("s", modifiers: [.command, .control])
+            .disabled(!hasDocument)
 
             Button((activeModel?.controller?.isEditing ?? false) ? "Done Editing" : "Edit Source") {
                 activeModel?.toggleEditMode()
@@ -129,6 +129,12 @@ struct MarcoCommands: Commands {
             }
             .keyboardShortcut("f", modifiers: [.command, .option])
             .disabled(!hasDocument)
+        }
+
+        CommandGroup(replacing: .help) {
+            if let guide = Bundle.main.url(forResource: "Welcome", withExtension: "md") {
+                Button("\(Bundle.main.displayName) Guide") { DocumentOpener.shared.open(guide) }
+            }
         }
 
         // MARK: Go — history

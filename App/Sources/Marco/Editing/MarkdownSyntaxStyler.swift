@@ -79,8 +79,16 @@ enum MarkdownSyntaxStyler {
     // MARK: - Base attributes
 
     private static func resetAttributes(_ storage: NSTextStorage, range: NSRange, baseFont: NSFont) {
-        storage.setAttributes([.font: baseFont, .foregroundColor: NSColor.textColor], range: range)
+        storage.setAttributes([.font: baseFont, .foregroundColor: NSColor.textColor, .paragraphStyle: lineStyle], range: range)
     }
+
+    /// Board 06: 22 pt lines.
+    nonisolated(unsafe) private static let lineStyle: NSParagraphStyle = {
+        let style = NSMutableParagraphStyle()
+        style.minimumLineHeight = 22
+        style.maximumLineHeight = 22
+        return style
+    }()
 
     // MARK: - Fence tracking
 
@@ -131,10 +139,11 @@ enum MarkdownSyntaxStyler {
         headingPattern.enumerateMatches(in: text as String, range: range) { match, _, _ in
             guard let match, let full = Range(match.range, in: text as String) else { return }
             let level = (text as String)[full].prefix(while: { $0 == "#" }).count
-            let size = baseFont.pointSize + CGFloat(max(0, 5 - level))
-            let font = NSFont.monospacedSystemFont(ofSize: size, weight: .bold)
+            // Board 06: same size as body, semibold, with the `#` run dimmed.
+            let font = NSFont.monospacedSystemFont(ofSize: baseFont.pointSize, weight: .semibold)
             storage.addAttribute(.font, value: font, range: match.range)
             storage.addAttribute(.foregroundColor, value: colors.heading, range: match.range)
+            storage.addAttribute(.foregroundColor, value: colors.dim, range: NSRange(location: match.range.location, length: level))
         }
 
         linkPattern.enumerateMatches(in: text as String, range: range) { match, _, _ in

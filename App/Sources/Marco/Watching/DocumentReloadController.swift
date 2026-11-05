@@ -30,6 +30,8 @@ final class DocumentReloadController {
     /// Gates the contextual reveal of the follow-mode toolbar toggle, which
     /// is meaningless until a file is actually being rewritten live.
     private(set) var hasExternalChanges = false
+    /// When the file last changed on disk under us; drives "Updated just now".
+    private(set) var lastExternalChange: Date?
 
     // MARK: - M3: source edit mode, save, conflict banner
 
@@ -175,7 +177,7 @@ final class DocumentReloadController {
                     self.blocks = blocks
                     self.loadError = nil
                 case .failure(let error):
-                    self.loadError = "Couldn't open \(fileURL.lastPathComponent): \(error.localizedDescription)"
+                    self.loadError = "Couldn\u{2019}t open \(fileURL.lastPathComponent): \(error.localizedDescription)"
                 }
                 self.onInitialLoaded?()
                 if self.loadError == nil { self.onDocumentChanged?() }
@@ -195,6 +197,7 @@ final class DocumentReloadController {
         if isLoading { loadInitial(); return }
         if loadError != nil { loadInitial(); return }
         hasExternalChanges = true
+        lastExternalChange = Date()
         if isEditing {
             guard (try? String(contentsOf: url, encoding: .utf8)) != lastText else { return }
             let (newState, action) = EditConflictMachine.transition(state: conflictState, event: .externalChange)
@@ -389,7 +392,7 @@ final class DocumentReloadController {
             approvedDiskText = nil
             return true
         } catch {
-            saveError = "Couldn't save \(url.lastPathComponent): \(error.localizedDescription)"
+            saveError = "Couldn\u{2019}t save \(url.lastPathComponent): \(error.localizedDescription)"
             return false
         }
     }

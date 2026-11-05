@@ -3,139 +3,94 @@ import SwiftUI
 import UniformTypeIdentifiers
 import MarcoRendering
 
-/// The no-document "home screen" (PLAN §6): a single centered glass card that
-/// is the whole window when opened without a file. It carries the app's
-/// identity, the two ways in (Open… / drop a file), and a recent-files list
-/// backed by security-scoped bookmarks. Deliberately weightless — no library,
-/// no onboarding, no chrome.
+/// Board 07: shown only when no document is open. Identity and Open… on the
+/// left, recents on the right, and the whole window is the drop target.
 struct EmptyStateView: View {
-    /// Snapshot-only: force the opaque (Reduce Transparency) surface, since
-    /// `ImageRenderer` can't rasterize the live glass backdrop.
-    var forceOpaque = false
-
     @Environment(\.theme) private var theme
-    @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
     @State private var recents = RecentDocumentsStore.shared
     @State private var isTargeted = false
 
-    private var reduceTransparency: Bool { forceOpaque || systemReduceTransparency }
     private var appDelegate: AppDelegate? { NSApp.delegate as? AppDelegate }
-
     private let markdownExtensions = ["md", "markdown", "mdown"]
 
     var body: some View {
-        card
-            .frame(maxWidth: 460)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(theme.background)
-            .dropDestination(for: URL.self) { urls, _ in open(dropped: urls) } isTargeted: { isTargeted = $0 }
-    }
-
-    // MARK: - Card
-
-    private var card: some View {
-        VStack(spacing: 0) {
-            header
-            actions
-            if !recents.entries.isEmpty {
-                Divider().overlay(theme.chipStroke)
-                    .padding(.horizontal, 4)
-                recentsList
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 0) {
+                intro.frame(minWidth: 300, maxWidth: .infinity)
+                recentsPane.frame(width: 360)
             }
+            intro
         }
-        .padding(28)
-        .background {
-            if reduceTransparency {
-                // Reduce Transparency: swap the glass for an opaque surface so
-                // the card never depends on a blurred backdrop for legibility.
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(theme.chipFill)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .strokeBorder(theme.chipStroke, lineWidth: 1))
-            }
-        }
-        .glassEffectIfAvailable(enabled: !reduceTransparency)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(theme.background)
         .overlay {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            Rectangle()
                 .strokeBorder(isTargeted ? theme.accent : .clear, lineWidth: 2)
                 .animation(Theme.Motion.feedback, value: isTargeted)
+                .allowsHitTesting(false)
         }
-        .padding(40)
+        .dropDestination(for: URL.self) { urls, _ in open(dropped: urls) } isTargeted: { isTargeted = $0 }
     }
 
-    // MARK: - Header
-
-    private var header: some View {
-        VStack(spacing: 10) {
+    private var intro: some View {
+        VStack(spacing: 16) {
             Image(nsImage: NSApp.applicationIconImage)
                 .resizable()
                 .interpolation(.high)
-                .frame(width: 72, height: 72)
+                .frame(width: 96, height: 96)
                 .accessibilityHidden(true)
-
-            Text(Bundle.main.displayName)
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(theme.textPrimary)
-
-            Text(isTargeted ? "Drop to open" : "Open a Markdown file to read it, beautifully.")
-                .font(.system(size: 13))
-                .foregroundStyle(theme.textSecondary)
-                .multilineTextAlignment(.center)
-                .contentTransition(.opacity)
+            VStack(spacing: 4) {
+                Text(Bundle.main.displayName)
+                    .font(.system(size: 24, weight: .semibold))
+                    .tracking(-0.48)
+                    .foregroundStyle(theme.textPrimary)
+                Text(isTargeted ? "Drop to open" : "Open a Markdown file to read it")
+                    .font(.system(size: 13))
+                    .foregroundStyle(theme.textSecondary)
+                    .contentTransition(.opacity)
+            }
+            Button { appDelegate?.openPanel() } label: {
+                HStack(spacing: 8) {
+                    Text("Open…").font(.system(size: 13, weight: .medium))
+                    Text("⌘O").font(.system(size: 12)).opacity(0.7)
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14)
+                .frame(height: 28)
+                .background(theme.accent, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            }
+            .buttonStyle(PressableButtonStyle())
+            .keyboardShortcut(.defaultAction)
+            Text("or drop one here")
+                .font(.system(size: 11))
+                .foregroundStyle(theme.textTertiary)
         }
-        .padding(.bottom, 20)
+        .padding(20)
+        .frame(maxHeight: .infinity)
     }
 
-    // MARK: - Primary actions
-
-    private var actions: some View {
-        HStack(spacing: 10) {
-            Button {
-                appDelegate?.openPanel()
-            } label: {
-                Label("Open…", systemImage: "folder")
-            }
-            .keyboardShortcut(.defaultAction)
-
-            if let welcome = Bundle.main.url(forResource: "Welcome", withExtension: "md") {
-                Button {
-                    DocumentOpener.shared.open(welcome)
-                } label: {
-                    Label("Read the Guide", systemImage: "book")
+    private var recentsPane: some View {
+        ScrollView {
+            VStack(spacing: 2) {
+                ForEach(recents.entries) { entry in
+                    RecentRow(entry: entry) { DocumentOpener.shared.open(entry.url) }
                 }
             }
+            .padding(.vertical, 12)
+            .padding(.horizontal, 10)
         }
-        .controlSize(.large)
-        .padding(.bottom, recents.entries.isEmpty ? 0 : 20)
-    }
-
-    // MARK: - Recents
-
-    private var recentsList: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack {
-                Text("Recent")
-                    .font(.system(size: 11, weight: .semibold).smallCaps())
-                    .foregroundStyle(theme.textTertiary)
-                Spacer()
-                Button("Clear") { recents.clear() }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 11))
-                    .foregroundStyle(theme.textTertiary)
-                    .help("Clear the recent files list")
-            }
-            .padding(.horizontal, 6)
-            .padding(.top, 20)
-            .padding(.bottom, 4)
-
-            ForEach(recents.entries) { entry in
-                RecentRow(entry: entry) { DocumentOpener.shared.open(entry.url) }
+        .overlay {
+            if recents.entries.isEmpty {
+                Text("No recent files").font(.system(size: 13)).foregroundStyle(theme.textTertiary)
             }
         }
+        .frame(maxHeight: .infinity)
+        .background(theme.sidebar)
+        .overlay(alignment: .leading) { Rectangle().fill(theme.hairline).frame(width: 1) }
+        .contextMenu {
+            if !recents.entries.isEmpty { Button("Clear Recents") { recents.clear() } }
+        }
     }
-
-    // MARK: - Drop handling
 
     private func open(dropped urls: [URL]) -> Bool {
         guard let url = urls.first(where: { markdownExtensions.contains($0.pathExtension.lowercased()) }) else {
@@ -146,8 +101,7 @@ struct EmptyStateView: View {
     }
 }
 
-/// One recent-file row: filename + abbreviated location, with a hover fill and
-/// the whole row a single click/keyboard target.
+/// One recent file: name over abbreviated folder, 44 pt, accent fill on hover.
 private struct RecentRow: View {
     let entry: RecentDocumentsStore.Entry
     let action: () -> Void
@@ -157,48 +111,32 @@ private struct RecentRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
-                Image(systemName: "doc.text")
-                    .font(.system(size: 15))
-                    .foregroundStyle(theme.accent)
+                Image(systemName: "doc.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(hovering ? Color.white : Color(nsColor: .tertiaryLabelColor))
                     .frame(width: 20)
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(entry.name)
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(theme.textPrimary)
+                        .foregroundStyle(hovering ? Color.white : theme.textPrimary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Text(entry.location)
                         .font(.system(size: 11))
-                        .foregroundStyle(theme.textTertiary)
+                        .foregroundStyle(hovering ? Color.white.opacity(0.8) : theme.textSecondary)
                         .lineLimit(1)
                         .truncationMode(.head)
                 }
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 6)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(hovering ? theme.tableRowHoverFill : .clear))
+            .padding(.horizontal, 10)
+            .frame(height: 44)
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .background(hovering ? theme.accent : .clear, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressableButtonStyle())
         .onHover { hovering = $0 }
         .help(entry.url.path)
         .accessibilityLabel("\(entry.name), in \(entry.location)")
-    }
-}
-
-private extension View {
-    /// `.glassEffect` only when transparency is allowed; otherwise the caller's
-    /// own opaque background stands in.
-    @ViewBuilder
-    func glassEffectIfAvailable(enabled: Bool) -> some View {
-        if enabled {
-            glassEffect(in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        } else {
-            self
-        }
     }
 }

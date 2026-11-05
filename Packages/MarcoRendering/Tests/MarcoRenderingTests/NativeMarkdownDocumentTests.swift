@@ -329,6 +329,7 @@ extension NativeMarkdownDocumentTests {
         let controller = NativeMarkdownReadingView.Controller()
         let hosting = NSHostingView(rootView: NativeMarkdownReadingView(document: old, theme: theme, controller: controller))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 460), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
         window.contentView = hosting
         window.makeKeyAndOrderFront(nil)
         defer { window.close() }
@@ -355,6 +356,29 @@ extension NativeMarkdownDocumentTests {
         XCTAssertEqual((view.string as NSString).substring(with: view.selectedRange()), beforeText)
         XCTAssertEqual(visibleBlock(in: view, document: changed), beforeVisible)
         XCTAssertLessThan(abs(visiblePixelOffset(in: view) - beforePixel), 12)
+    }
+
+    @MainActor func testHostedDocumentScrollsToItsLastLine() throws {
+        _ = NSApplication.shared
+        let source = (0..<80).map { "Paragraph \($0)." }.joined(separator: "\n\n") + "\n\n## Last heading\n"
+        let theme = Theme(colorScheme: .light, scale: 1)
+        let document = NativeMarkdownDocument.build(source: source, blocks: MarkdownParser.parse(source), theme: theme, documentURL: nil)
+        let hosting = NSHostingView(rootView: NativeMarkdownReadingView(document: document, theme: theme, controller: .init()))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 460), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        hosting.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        guard let view = findTextView(in: hosting), let layout = view.layoutManager, let container = view.textContainer else {
+            return XCTFail("missing native text view")
+        }
+        view.scrollToEndOfDocument(nil)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        let textBottom = layout.usedRect(for: container).maxY + view.textContainerInset.height
+        XCTAssertGreaterThanOrEqual(view.frame.height, textBottom + view.textContainerInset.height - 1)
+        XCTAssertGreaterThanOrEqual(view.visibleRect.maxY, textBottom)
     }
 
     @MainActor private func findTextView(in view: NSView) -> NSTextView? {
@@ -395,6 +419,7 @@ extension NativeMarkdownDocumentTests {
             onCheckbox: { toggled = ($0, $1, $2) }, onMetadataToggle: { metadataClicks += 1 }, onCodeCopied: { copyClicks += 1 })
         let hosting = NSHostingView(rootView: reading)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 540), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
         window.contentView = hosting
         window.makeKeyAndOrderFront(nil)
         defer { window.close() }
@@ -417,7 +442,21 @@ extension NativeMarkdownDocumentTests {
         guard let item = menu?.items.first(where: { $0.title == "Copy Code" }), let action = item.action else { return XCTFail("missing code menu") }
         XCTAssertTrue(NSApp.sendAction(action, to: item.target, from: item))
         XCTAssertEqual(NSPasteboard.general.string(forType: .string), code.code)
-        XCTAssertEqual(copyClicks, 1)
+        XCTAssertEqual(copyClicks, 0, "code cards confirm in place, not with the window toast")
+        guard let storage = view.textStorage, let layout = view.layoutManager,
+              let card = (storage.attribute(.paragraphStyle, at: code.range.location, effectiveRange: nil) as? NSParagraphStyle)?.textBlocks.first as? MarcoTextBlock
+        else { return XCTFail("missing code card") }
+        XCTAssertEqual(card.copyState, .copied)
+        // Clicking the drawn Copy label copies the block.
+        NSPasteboard.general.clearContents()
+        let glyphs = layout.glyphRange(forCharacterRange: storage.range(of: card, at: code.range.location), actualCharacterRange: nil)
+        let frame = layout.boundsRect(for: card, glyphRange: glyphs).offsetBy(dx: view.textContainerOrigin.x, dy: view.textContainerOrigin.y)
+        let label = card.copyHitRect(inFrame: frame)
+        let click = NSEvent.mouseEvent(with: .leftMouseDown, location: view.convert(NSPoint(x: label.midX, y: label.midY), to: nil), modifierFlags: [], timestamp: 0,
+                                       windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+        view.mouseDown(with: click)
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), code.code)
+        XCTAssertEqual(copyClicks, 0)
         let findPasteboard = NSPasteboard(name: .find)
         findPasteboard.clearContents()
         findPasteboard.setString("Needle", forType: .string)
@@ -494,6 +533,7 @@ extension NativeMarkdownDocumentTests {
         let readyAt = CFAbsoluteTimeGetCurrent()
         let hosting = NSHostingView(rootView: NativeMarkdownReadingView(document: document, theme: theme, controller: .init()))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
         window.contentView = hosting
         window.makeKeyAndOrderFront(nil)
         defer { window.close() }
@@ -546,6 +586,7 @@ extension NativeMarkdownDocumentTests {
             let document = NativeMarkdownDocument.build(source: source, blocks: MarkdownParser.parse(source), theme: theme, documentURL: nil)
             let hosting = NSHostingView(rootView: NativeMarkdownReadingView(document: document, theme: theme, controller: .init()))
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 900), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
             window.appearance = NSAppearance(named: appearance)
             window.contentView = hosting
             window.makeKeyAndOrderFront(nil)
@@ -576,6 +617,7 @@ extension NativeMarkdownDocumentTests {
         let controller = NativeMarkdownReadingView.Controller()
         let hosting = NSHostingView(rootView: NativeMarkdownReadingView(document: document, theme: theme, controller: controller))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 250), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
         window.contentView = hosting
         window.makeKeyAndOrderFront(nil)
         defer { window.close() }
@@ -592,5 +634,31 @@ extension NativeMarkdownDocumentTests {
         guard let rtfd = NSPasteboard.general.data(forType: .rtfd) else { return XCTFail("missing image RTFD payload") }
         let restored = try NSAttributedString(data: rtfd, options: [.documentType: NSAttributedString.DocumentType.rtfd], documentAttributes: nil)
         XCTAssertNotNil((restored.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment)?.fileWrapper)
+    }
+}
+
+extension NativeMarkdownDocumentTests {
+    func testCodeAndQuoteBlocksSurviveIntoLayout() {
+        let source = "Body\n\n```swift\nlet a = 1\nlet b = 2\n```\n\n> Quote\n"
+        let doc = NativeMarkdownDocument.build(source: source, blocks: MarkdownParser.parse(source), theme: Theme(colorScheme: .light, scale: 1), documentURL: nil)
+        let text = doc.attributedString
+        let codeAt = (text.string as NSString).range(of: "let a").location
+        let quoteAt = (text.string as NSString).range(of: "Quote").location
+        let codeStyle = text.attribute(.paragraphStyle, at: codeAt, effectiveRange: nil) as? NSParagraphStyle
+        let quoteStyle = text.attribute(.paragraphStyle, at: quoteAt, effectiveRange: nil) as? NSParagraphStyle
+        XCTAssertTrue(codeStyle?.textBlocks.first is MarcoTextBlock, "code: \(String(describing: codeStyle?.textBlocks))")
+        XCTAssertTrue(quoteStyle?.textBlocks.first is MarcoTextBlock, "quote: \(String(describing: quoteStyle?.textBlocks))")
+
+        let storage = NSTextStorage(attributedString: text)
+        let layout = NSLayoutManager()
+        storage.addLayoutManager(layout)
+        let container = NSTextContainer(size: NSSize(width: 680, height: CGFloat.greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        layout.addTextContainer(container)
+        layout.ensureLayout(for: container)
+        let x = { (i: Int) in layout.lineFragmentUsedRect(forGlyphAt: layout.glyphIndexForCharacter(at: i), effectiveRange: nil).minX }
+        XCTAssertEqual(x(codeAt) - x(0), 16, accuracy: 0.5)
+        XCTAssertEqual(x(codeAt + 10) - x(0), 16, accuracy: 0.5, "every code line sits inside the card")
+        XCTAssertEqual(x(quoteAt) - x(0), 17, accuracy: 0.5)
     }
 }
