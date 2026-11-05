@@ -8,6 +8,20 @@ import SwiftUI
 @MainActor
 final class SourceEditorHandle {
     fileprivate weak var textView: NSTextView?
+    private var pendingFind: NSTextFinder.Action?
+
+    func find(_ action: NSTextFinder.Action) {
+        guard textView != nil else { pendingFind = action; return }
+        let item = NSMenuItem()
+        item.tag = action.rawValue
+        textView?.performFindPanelAction(item)
+    }
+
+    fileprivate func flushPendingFind() {
+        guard let pendingFind else { return }
+        self.pendingFind = nil
+        find(pendingFind)
+    }
 
     /// 0-based line the caret currently sits on (counting newlines before
     /// the selection start), or `nil` if the editor isn't mounted yet.
@@ -74,6 +88,7 @@ struct SourceEditorView: NSViewRepresentable {
 
         let textView = NSTextView(frame: .zero, textContainer: textContainer)
         textView.isRichText = false
+        textView.usesFindBar = true
         textView.font = Self.font
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
@@ -96,6 +111,7 @@ struct SourceEditorView: NSViewRepresentable {
         textView.string = text
 
         handle.textView = textView
+        DispatchQueue.main.async { [weak handle] in handle?.flushPendingFind() }
 
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true

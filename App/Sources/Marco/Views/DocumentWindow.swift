@@ -16,17 +16,8 @@ struct DocumentWindow: View {
     @AppStorage("textScale") private var textScale: Double = 1.0
 
     @State private var model = WindowModel()
-
-    #if DEBUG
-    /// M6 Phase 1 slice 1: route document windows to the new TextKit 2 reading
-    /// surface instead of the shipping `DocumentRenderer`. Debug-only — the
-    /// toggle lives in the Debug menu; `MARCO_TEXTKIT_READING=1` forces it on.
-    /// Release builds never expose it (this whole member is `#if DEBUG`).
-    @AppStorage("debugTextKitReading") private var debugTextKitReading = false
-    private var useTextKitReading: Bool {
-        debugTextKitReading || ProcessInfo.processInfo.environment["MARCO_TEXTKIT_READING"] == "1"
-    }
-    #endif
+    @State private var copied = false
+    @State private var copyToken = 0
 
     private var theme: Theme {
         Theme(colorScheme: colorScheme, scale: CGFloat(textScale))
@@ -55,14 +46,21 @@ struct DocumentWindow: View {
         }
         .frame(minWidth: 640, minHeight: 480)
         .environment(\.theme, theme)
-        .environment(\.checkboxToggleHandler) { blockStartLine, lineOffset, checked in
-            model.controller?.toggleCheckbox(blockStartLine: blockStartLine, itemLineOffset: lineOffset, checked: checked)
-        }
-        .environment(\.presentLightbox) { model.lightboxImage = $0 }
         .overlay {
             if let image = model.lightboxImage {
                 LightboxView(image: image) { model.lightboxImage = nil }
                     .transition(.opacity)
+            }
+        }
+        .overlay(alignment: .top) {
+            if copied {
+                Label("Copied", systemImage: "checkmark")
+                    .font(.system(size: 12, weight: .semibold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(.top, 14)
+                    .allowsHitTesting(false)
             }
         }
         .animation(reduceMotion ? nil : Theme.Motion.state, value: textScale)
@@ -72,15 +70,14 @@ struct DocumentWindow: View {
         .focusedValue(\.windowModel, model)
         .onAppear { DocumentOpener.shared.register(model) }
         .task(id: url) {
-            model.readingTheme = theme
+            model.setReadingTheme(theme)
             model.load(initial: url)
         }
         .onDisappear {
             DocumentOpener.shared.unregister(model)
             model.stop()
         }
-        .onChange(of: colorScheme) { _, _ in InlineMarkdown.invalidate() }
-        .onChange(of: theme) { _, newTheme in model.readingTheme = newTheme }
+        .onChange(of: theme) { _, newTheme in model.setReadingTheme(newTheme) }
     }
 
     // MARK: - Detail (reading / editor + overlays)
@@ -97,7 +94,10 @@ struct DocumentWindow: View {
 
     @ViewBuilder
     private func contentArea(_ controller: DocumentReloadController) -> some View {
-        if let loadError = controller.loadError {
+        if controller.isLoading {
+            ProgressView("Opening document…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let loadError = controller.loadError {
             errorView(loadError)
         } else if controller.blocks.isEmpty, !controller.isEditing {
             EmptyDocumentView()
@@ -115,25 +115,29 @@ struct DocumentWindow: View {
                         }
                     }
                     .transition(.opacity)
+                } else if let snapshot = model.readingSnapshot {
+                    NativeMarkdownReadingView(
+                        document: snapshot, theme: theme, controller: model.nativeReader,
+                        onCheckbox: { controller.toggleCheckbox(blockStartLine: $0, itemLineOffset: $1, checked: $2) },
+                        onLink: { model.openReadingLink($0) },
+                        onImageAccess: { folder in
+                            if FolderAccessStore.shared.requestAccess(
+                                defaultDirectory: folder,
+                                message: "Allow \(Bundle.main.displayName) to open images in \u{201c}\(folder.lastPathComponent)\u{201d}."
+                            ) != nil { model.nativeReader.retryImages() }
+                        },
+                        onImageOpen: { model.lightboxImage = $0 },
+                        onVisibleBlock: {
+                            controller.visibleBlockID = $0
+                            model.trackOutline(topBlockID: $0)
+                        },
+                        onMetadataToggle: { model.toggleMetadata() },
+                        onCodeCopied: { signalCopied() }
+                    )
+                    .transition(.opacity)
                 } else {
-                    #if DEBUG
-                    if useTextKitReading {
-                        TextKitReadingView(
-                            text: controller.currentText,
-                            blocks: controller.blocks,
-                            theme: theme,
-                            model: model,
-                            documentURL: model.currentURL
-                        )
-                        .transition(.opacity)
-                    } else {
-                        DocumentRenderer(controller: controller, model: model, documentURL: model.currentURL)
-                            .transition(.opacity)
-                    }
-                    #else
-                    DocumentRenderer(controller: controller, model: model, documentURL: model.currentURL)
-                        .transition(.opacity)
-                    #endif
+                    ProgressView("Rendering document…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
             .animation(reduceMotion ? nil : Theme.Motion.state, value: controller.isEditing)
@@ -145,10 +149,6 @@ struct DocumentWindow: View {
     @ViewBuilder
     private func topOverlays(_ controller: DocumentReloadController) -> some View {
         VStack(spacing: 8) {
-            if model.find.isActive {
-                FindBar(model: model)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-            }
             banners(controller)
             if let hint = model.accessHint {
                 AccessHintBanner(
@@ -161,7 +161,6 @@ struct DocumentWindow: View {
             }
         }
         .padding(.top, 8)
-        .animation(reduceMotion ? nil : Theme.Motion.state, value: model.find.isActive)
         .animation(reduceMotion ? nil : Theme.Motion.state, value: model.accessHint)
     }
 
@@ -175,7 +174,7 @@ struct DocumentWindow: View {
         } else if let saveError = controller.saveError {
             SaveErrorBanner(
                 message: saveError,
-                onSaveAs: { saveAs(controller) },
+                onSaveAs: { saveAs() },
                 onDismiss: { controller.saveError = nil }
             )
         }
@@ -226,13 +225,14 @@ struct DocumentWindow: View {
         if let controller = model.controller {
             ToolbarItem(placement: .automatic) {
                 Button {
-                    model.find.isActive ? model.closeFind() : model.openFind()
+                    model.openFind()
                 } label: {
                     Image(systemName: "magnifyingglass")
                         .frame(minWidth: 24, minHeight: 22)
                 }
                 .help("Find (⌘F)")
                 .accessibilityLabel("Find")
+                .disabled(!model.canFind)
             }
             ToolbarItem(placement: .automatic) {
                 Toggle(isOn: Binding(get: { controller.isEditing }, set: { _ in model.toggleEditMode() })) {
@@ -240,6 +240,7 @@ struct DocumentWindow: View {
                         .frame(minWidth: 24, minHeight: 22)
                 }
                 .toggleStyle(.button)
+                .disabled(controller.isLoading || controller.loadError != nil)
                 .help(controller.isEditing ? "Done Editing (⌘E)" : "Edit Source (⌘E)")
                 .accessibilityLabel("Edit Source")
             }
@@ -273,15 +274,20 @@ struct DocumentWindow: View {
         )
     }
 
-    private func saveAs(_ controller: DocumentReloadController) {
+    private func saveAs() {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = model.currentURL?.lastPathComponent ?? "Untitled.md"
         guard panel.runModal() == .OK, let destination = panel.url else { return }
-        do {
-            try Data(controller.editedText.utf8).write(to: destination, options: .atomic)
-            controller.saveError = nil
-        } catch {
-            controller.saveError = "Couldn't save to \(destination.lastPathComponent): \(error.localizedDescription)"
+        model.saveAs(to: destination)
+    }
+
+    private func signalCopied() {
+        copyToken &+= 1
+        let token = copyToken
+        copied = true
+        Task {
+            try? await Task.sleep(for: .seconds(1))
+            if copyToken == token { copied = false }
         }
     }
 

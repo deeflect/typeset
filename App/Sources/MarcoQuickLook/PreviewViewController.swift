@@ -4,33 +4,73 @@ import MarcoRendering
 import Quartz
 import SwiftUI
 
-/// Quick Look preview extension: Space in Finder on a `.md` file renders it
-/// with the exact same `MarcoRendering` block views and `Theme` the app uses
-/// (PLAN §4 "pixel-identical", §2 J5). Deliberately static and read-only —
-/// no file watcher, no editing, no interactive checkboxes/lightbox/find:
-/// every interactive environment hook (`checkboxToggleHandler`,
-/// `presentLightbox`, `findHighlight`) is left at its inert default, which is
-/// exactly the posture those hooks were designed for (see their doc comments
-/// in `MarcoRendering`).
+/// Quick Look uses the same rendered document and reading view as the app.
 final class PreviewViewController: NSViewController, @MainActor QLPreviewingController {
+    private var generation = 0
+    private var currentURL: URL?
+    private var preparationTask: Task<NativeMarkdownDocument, Error>?
+    private var isPreparing = false
+    private var needsAppearanceRefresh = false
+    private(set) var installedColorScheme: ColorScheme?
+    private(set) var installationCount = 0
+
     override func loadView() {
-        view = NSView()
+        let host = AppearanceView()
+        host.onChange = { [weak self] in
+            guard let self, let url = self.currentURL else { return }
+            if self.isPreparing { self.needsAppearanceRefresh = true; return }
+            self.preparePreviewOfFile(at: url) { _ in }
+        }
+        view = host
+    }
+
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        generation += 1
+        preparationTask?.cancel()
+        isPreparing = false
     }
 
     func preparePreviewOfFile(at url: URL, completionHandler handler: @escaping (Error?) -> Void) {
-        do {
-            let text = try String(contentsOf: url, encoding: .utf8)
-            let blocks = MarkdownParser.parse(text)
-            installHostingView(blocks: blocks, documentURL: url)
-            handler(nil)
-        } catch {
-            handler(error)
+        generation += 1
+        let requested = generation
+        currentURL = url
+        preparationTask?.cancel()
+        isPreparing = true
+        let appearance = view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? ColorScheme.dark : .light
+        let theme = Theme(colorScheme: appearance, scale: 1)
+        let task = Task.detached(priority: .userInitiated) {
+            let source = try String(contentsOf: url, encoding: .utf8)
+            try Task.checkCancellation()
+            return try NativeMarkdownDocument.buildCancellable(
+                source: source, blocks: MarkdownParser.parse(source), theme: theme, documentURL: url)
+        }
+        preparationTask = task
+        Task { @MainActor in
+            let result = await task.result
+            guard requested == generation else { handler(CancellationError()); return }
+            isPreparing = false
+            switch result {
+            case .success(let snapshot):
+                install(snapshot, theme: theme)
+                handler(nil)
+            case .failure(let error):
+                handler(error)
+            }
+            if needsAppearanceRefresh {
+                needsAppearanceRefresh = false
+                preparePreviewOfFile(at: url) { _ in }
+            }
         }
     }
 
-    private func installHostingView(blocks: [Block], documentURL: URL) {
-        let root = PreviewDocumentView(blocks: blocks, documentURL: documentURL)
-        let hosting = NSHostingView(rootView: root)
+    private func install(_ document: NativeMarkdownDocument, theme: Theme) {
+        installedColorScheme = theme.colorScheme
+        installationCount += 1
+        view.subviews.forEach { $0.removeFromSuperview() }
+        let hosting = NSHostingView(rootView: NativeMarkdownReadingView(
+            document: document, theme: theme, controller: NativeMarkdownReadingView.Controller()))
         hosting.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(hosting)
         NSLayoutConstraint.activate([
@@ -45,37 +85,10 @@ final class PreviewViewController: NSViewController, @MainActor QLPreviewingCont
     }
 }
 
-/// The static reading surface: a plain scrolling column of `BlockView`s,
-/// themed and light/dark aware via `.colorScheme` (`ScrollView` here is fine
-/// — unlike the app's `ImageRenderer` snapshot path, Quick Look actually
-/// hosts a live, scrollable `NSHostingView`).
-private struct PreviewDocumentView: View {
-    let blocks: [Block]
-    let documentURL: URL
-    @Environment(\.colorScheme) private var colorScheme
-    @AppStorage("textScale") private var textScale: Double = 1.0
-
-    private var theme: Theme { Theme(colorScheme: colorScheme, scale: CGFloat(textScale)) }
-
-    var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(blocks) { block in
-                    BlockView(block: block)
-                        .id(block.id)
-                }
-            }
-            .frame(maxWidth: theme.contentMaxWidth, alignment: .leading)
-            .padding(.horizontal, theme.contentHorizontalPadding)
-            .padding(.top, theme.contentTopPadding)
-            .padding(.bottom, theme.scaled(56))
-            .frame(maxWidth: .infinity, alignment: .center)
-        }
-        .background(theme.background)
-        .environment(\.theme, theme)
-        .environment(\.documentBaseURL, documentURL)
-        // Every other rendering environment hook (checkbox write-back,
-        // lightbox, find highlight) stays at its inert default — read-only,
-        // static, exactly the Quick Look posture.
+private final class AppearanceView: NSView {
+    var onChange: (() -> Void)?
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        onChange?()
     }
 }

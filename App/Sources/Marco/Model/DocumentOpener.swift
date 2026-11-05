@@ -70,6 +70,10 @@ final class DocumentOpener {
 
     private var liveModels: [WindowModel] { models.compactMap(\.model) }
 
+    func prepareToTerminate() -> Bool {
+        realModels.allSatisfy { $0.prepareToClose() }
+    }
+
     /// Windows that actually exist on screen. SwiftUI builds and discards
     /// transient `WindowModel`s while resolving a scene, and those never get
     /// an `NSWindow` — handing one a document would drop it on the floor.

@@ -6,6 +6,11 @@ import MarcoRendering
 /// the classic `NSOpenPanel`, Dock reopen) into `DocumentOpener`, which
 /// decides which window each request should land in.
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        MainActor.assumeIsolated {
+            DocumentOpener.shared.prepareToTerminate() ? .terminateNow : .terminateCancel
+        }
+    }
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Resolves + starts accessing every persisted folder-access
         // bookmark (see FolderAccessStore) and logs the active grants.
@@ -15,17 +20,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // (PLAN §8), so a Release binary has no code path that reads
         // MARCO_SNAPSHOT/MARCO_*_BENCH — setting them is a guaranteed no-op.
         #if DEBUG
-        // The M6 TextKit-2 reading surface is an in-progress spike — it has no
-        // tables, task checkboxes, frontmatter chip or code-block chrome yet.
-        // Its Debug-menu toggle is `@AppStorage`-backed, so flipping it once
-        // left every later launch rendering documents with that unfinished
-        // surface, which reads as "the app is broken". Make the toggle
-        // session-scoped: always start on the shipping renderer.
-        UserDefaults.standard.removeObject(forKey: "debugTextKitReading")
         // Headless snapshot mode (visual verification without Screen
         // Recording): render the requested file to PNGs and exit.
         if SnapshotRunner.runIfRequested() {
-            NSApp.terminate(nil)
             return
         }
         // Headless live-reload verification (visible watcher/reload
@@ -40,18 +37,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         if StyleBenchRunner.runIfRequested() {
-            return
-        }
-        // Headless ⌘F perf verification (segment build / search / highlight
-        // apply on a large file) without a visible window.
-        if FindBenchRunner.runIfRequested() {
-            NSApp.terminate(nil)
-            return
-        }
-        // M6 Phase 0 spike (throwaway, see App/Sources/Marco/Spike): drives
-        // one TextKit 2 or LazyVStack measurement in a real (visible)
-        // window, prints results, and quits.
-        if TextKitSpikeBenchRunner.runIfRequested() {
             return
         }
         #endif

@@ -1,5 +1,4 @@
 import Foundation
-import MarcoCore
 import os
 
 /// Watches a single Markdown file on disk and calls back (debounced) when
@@ -53,7 +52,7 @@ final class FileWatcher: @unchecked Sendable {
     /// pattern) should never surface a "file removed" flicker — only a
     /// disappearance that outlasts `removedGracePeriod` is reported.
     private var hasReportedRemoved = false
-    private var expectedWrite = ExpectedWriteWindow()
+    private var expectedContents: Data?
 
     private static let log = Logger(subsystem: "com.dee.marco.draft", category: "FileWatcher")
 
@@ -64,6 +63,10 @@ final class FileWatcher: @unchecked Sendable {
         queue.async { [weak self] in self?.attachAll() }
     }
 
+    func whenReady(_ callback: @escaping @Sendable () -> Void) {
+        queue.async(execute: callback)
+    }
+
     deinit {
         fileSource?.cancel()
         dirSource?.cancel()
@@ -71,11 +74,10 @@ final class FileWatcher: @unchecked Sendable {
         removedGraceTimer?.cancel()
     }
 
-    /// M3 hook: call right before the app writes this file itself, so the
-    /// watcher doesn't fire a reload for its own save.
-    func expectOwnWrite(duration: TimeInterval = 2.0) {
+    /// Suppress only an event whose current file still matches our saved bytes.
+    func expectOwnWrite(contents: Data) {
         queue.async { [weak self] in
-            self?.expectedWrite.beginExpecting(now: Date(), duration: duration)
+            self?.expectedContents = contents
         }
     }
 
@@ -202,9 +204,9 @@ final class FileWatcher: @unchecked Sendable {
         timer.schedule(deadline: .now() + debounceInterval)
         timer.setEventHandler { [weak self] in
             guard let self else { return }
-            if self.expectedWrite.isExpectingWrite(at: Date()) {
-                self.expectedWrite.clear()
-                return
+            if let expected = self.expectedContents {
+                self.expectedContents = nil
+                if (try? Data(contentsOf: self.path)) == expected { return }
             }
             self.onReload?()
         }

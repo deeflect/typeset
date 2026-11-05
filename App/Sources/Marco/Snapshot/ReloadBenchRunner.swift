@@ -54,10 +54,12 @@ enum ReloadBenchRunner {
         }
 
         controller.start()
-        log(
-            "reload-bench: watching \(path), initial blocks=\(controller.blocks.count)"
-                + (controller.loadError.map { " loadError=\($0)" } ?? "")
-        )
+        controller.onInitialLoaded = {
+            log(
+                "reload-bench: watching \(path), initial blocks=\(controller.blocks.count)"
+                    + (controller.loadError.map { " loadError=\($0)" } ?? "")
+            )
+        }
 
         Task {
             try? await Task.sleep(for: .seconds(timeout))

@@ -31,11 +31,10 @@ struct OutlineBuilderTests {
     }
 
     @Test func headingTextResolvesInlineContentLikeATrailingHash() {
-        let raw = "# C#\n"
+        let raw = "# C#\n\n## **Bold** [linked](other.md) `code`\n"
         let blocks = MarkdownParser.parse(raw)
         let outline = OutlineBuilder.build(from: blocks)
-        #expect(outline.count == 1)
-        #expect(outline[0].title == "C#")
+        #expect(outline.map(\.title) == ["C#", "Bold linked code"])
     }
 
     @Test func skippedLevelDoesNotDoubleIndent() {

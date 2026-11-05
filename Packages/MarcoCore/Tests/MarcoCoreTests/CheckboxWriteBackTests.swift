@@ -54,6 +54,16 @@ struct CheckboxWriteBackTests {
         #expect(result == "---\ntitle: X\n---\n- [x] item\n")
     }
 
+    @Test func preservesLineEndingsAndBOM() {
+        for newline in ["\r\n", "\r", "\n"] {
+            let source = "\u{FEFF}- [ ] first\(newline)- [ ] second\(newline)"
+            #expect(CheckboxWriteBack.flip(fileText: source, blockStartLine: 0, itemLineOffset: 1, checked: true)
+                == "\u{FEFF}- [ ] first\(newline)- [x] second\(newline)")
+            #expect(CheckboxWriteBack.flip(fileText: source, blockStartLine: 0, itemLineOffset: 0, checked: true)
+                == "\u{FEFF}- [x] first\(newline)- [ ] second\(newline)")
+        }
+    }
+
     @Test func rejectsWhenAlreadyInTargetState() {
         let text = "- [x] done\n"
         let result = CheckboxWriteBack.flip(fileText: text, blockStartLine: 0, itemLineOffset: 0, checked: true)

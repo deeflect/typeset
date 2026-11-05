@@ -2,6 +2,7 @@ import AppKit
 import CryptoKit
 import Foundation
 import MarcoCore
+import MarcoRendering
 
 // Debug-only: this diagnostic entry point never ships in Release (PLAN §8).
 #if DEBUG
@@ -39,11 +40,12 @@ enum EditBenchRunner {
         var reloadCount = 0
         controller.onReloadApplied = { _ in reloadCount += 1 }
         controller.start()
-        log("edit-bench: watching \(path), initial blocks=\(controller.blocks.count)")
 
         Task {
+            while controller.isLoading { try? await Task.sleep(for: .milliseconds(10)) }
+            log("edit-bench: watching \(path), initial blocks=\(controller.blocks.count)")
             // MARK: Scenario 1 — checkbox write-back, no reload pulse
-            guard let (blockStartLine, lineOffset, currentlyChecked) = firstCheckboxLocation(in: controller.blocks) else {
+            guard let (blockStartLine, lineOffset, currentlyChecked) = firstCheckboxLocation(in: controller) else {
                 log("edit-bench: FAIL — no task-list checkbox found in fixture; aborting")
                 NSApplication.shared.terminate(nil)
                 return
@@ -74,11 +76,6 @@ enum EditBenchRunner {
 
             // MARK: Scenario 3 — conflict banner: dirty buffer + external change
             //
-            // Wait out `FileWatcher`'s own-write suppression window from
-            // Scenario 2's save (default 2s) first — an external write
-            // landing inside that window is (by design) indistinguishable
-            // from an echo of our own save, so the bench must not race it.
-            try? await Task.sleep(for: .milliseconds(2200))
             _ = controller.enterEditMode()
             controller.noteEditedTextChanged(controller.editedText + "\n\nLocal in-progress edit.\n")
             check("buffer is dirty going into the conflict scenario", controller.conflictState == .dirty)
@@ -107,18 +104,11 @@ enum EditBenchRunner {
         return true
     }
 
-    /// Finds the first top-level list block with at least one checkbox
-    /// item, returning `(block.startLine, item.checkboxLineOffset, isCurrentlyChecked)`.
-    private static func firstCheckboxLocation(in blocks: [Block]) -> (Int, Int, Bool)? {
-        for block in blocks {
-            guard case .list = block.kind, let model = BlockStructureCache.shared.list(for: block) else { continue }
-            for item in model.items {
-                if let checkbox = item.checkbox, let offset = item.checkboxLineOffset {
-                    return (block.startLine, offset, checkbox == .checked)
-                }
-            }
-        }
-        return nil
+    private static func firstCheckboxLocation(in controller: DocumentReloadController) -> (Int, Int, Bool)? {
+        let document = NativeMarkdownDocument.build(
+            source: controller.currentText, blocks: controller.blocks,
+            theme: Theme(colorScheme: .light, scale: 1), documentURL: controller.url)
+        return document.checkboxes.first.map { ($0.blockStartLine, $0.lineOffset, $0.checked) }
     }
 }
 #endif

@@ -43,27 +43,16 @@ public enum BlockDiffer {
     /// Since `Block.id` no longer bakes global document position into
     /// identity (see `Block.assigningOccurrenceIndices`), a single
     /// insertion/deletion near the top of the document no longer shifts
-    /// every downstream block's id — this finds the longest common
-    /// subsequence (LCS) of ids between `old` and `new` and reports the
-    /// rest as inserted/deleted.
+    /// every downstream block's id — this greedily matches an increasing
+    /// subsequence of ids and reports the rest as inserted/deleted.
     ///
     /// Complexity: O(P) to trim the common leading/trailing run of
     /// blocks (ids equal at the same relative position from each end),
     /// which collapses the common live-reload case — a small local edit
     /// in a large document — down to a tiny remaining "middle" region,
-    /// plus O(N + D) over that middle region using a hashtable-based
-    /// LCS (patience-diff-style: blocks in the middle whose id is unique
-    /// to both sides are matched by that id in O(1), then the matched
-    /// anchors are extended into a full LCS with a single O(N) pass; this
-    /// is not full general Myers O(ND) but a widely-used approximation
-    /// that is exact whenever ids aren't repeated on both sides within
-    /// the middle region — repeats fall back to treating those
-    /// occurrences positionally, which only affects duplicate-content
-    /// blocks and never changes the deleted/inserted/unchanged counts for
-    /// unique blocks). N is the size of the untrimmed middle region and D
-    /// is the edit distance within it — for a single local edit in a
-    /// large document, both are small regardless of overall document
-    /// size.
+    /// plus a hashtable-assisted greedy pass over the middle region.
+    /// This preserves stable identities for local edits but can choose
+    /// more insertions/deletions than an exact LCS when blocks move.
     public static func diff(old: [Block], new: [Block]) -> [BlockChange] {
         // Trim common prefix. Compares by digest + occurrenceIndex
         // directly (`hasSameIdentity`, equivalent to `.id` equality)
@@ -101,16 +90,7 @@ public enum BlockDiffer {
         return changes
     }
 
-    /// LCS-by-id over the untrimmed middle region, using a hashtable to
-    /// find ids unique to each side in O(1) rather than the O(N*M) DP
-    /// table a textbook LCS would use. Correct and exact when there are
-    /// no duplicate ids within `old` or within `new`'s middle region
-    /// (the overwhelmingly common case — duplicate ids within the SAME
-    /// parse only arise from duplicate-content blocks that also didn't
-    /// shift relative occurrence order, which is rare for the changed
-    /// middle region specifically). When duplicates land in the middle
-    /// region, they're matched greedily in order of appearance, which
-    /// stays correct for total insert/delete/unchanged counts.
+    /// Greedy identity matching over the untrimmed middle region.
     private static func diffMiddle(old: [Block], new: [Block]) -> [BlockChange] {
         if old.isEmpty && new.isEmpty { return [] }
         if old.isEmpty { return new.map { .inserted($0) } }
@@ -129,9 +109,8 @@ public enum BlockDiffer {
         // For each old block (in order), find its next matching index in
         // `new` that's strictly greater than the last matched `new`
         // index — this greedily builds an increasing subsequence of
-        // matched (oldIndex, newIndex) pairs, which is exactly an LCS
-        // when ids are unique per side, and a reasonable/stable
-        // approximation otherwise.
+        // matched (oldIndex, newIndex) pairs. This may be shorter than
+        // an exact LCS even when ids are unique on each side.
         var matches: [(oldIndex: Int, newIndex: Int)] = []
         var lastNewIndex = -1
         for (oldIndex, block) in old.enumerated() {

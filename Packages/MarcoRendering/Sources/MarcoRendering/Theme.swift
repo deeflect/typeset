@@ -3,8 +3,8 @@ import SwiftUI
 /// The single source of visual truth for the reading view.
 ///
 /// A `Theme` is a lightweight value computed from the current color scheme
-/// and text-size scale. Every block view reads it from the environment, so
-/// the whole typographic ramp scales and recolors together. Colors lean on
+/// and text-size scale. The native document builder and app chrome share it.
+/// Colors lean on
 /// Apple's semantic system colors (label / secondaryLabel / textBackground)
 /// for a native, auto-adapting base, with a few hand-tuned tints layered on
 /// top for code, quotes, and tables.
@@ -12,7 +12,7 @@ import SwiftUI
 /// Public: shared by the app and the Quick Look extension (and the app's
 /// export/print/snapshot paths), which each construct their own `Theme`
 /// value and pass it through the environment.
-public struct Theme: Equatable {
+public struct Theme: Equatable, Sendable {
     public var colorScheme: ColorScheme
     /// App-wide text-size multiplier (⌘+/⌘−/⌘0), persisted via AppStorage.
     public var scale: CGFloat
@@ -58,15 +58,6 @@ public struct Theme: Equatable {
         isDark ? Color(white: 1.0, opacity: 0.11) : Color(white: 0.0, opacity: 0.055)
     }
     public var inlineCodeText: Color { textPrimary }
-
-    /// In-place "copied" acknowledgment for an inline-code chip: the clicked
-    /// span briefly inverts to a filled accent surface with contrasting text,
-    /// then reverts (see `Theme.Motion.flashHold`). State feedback, not
-    /// decoration — it fires even under Reduce Motion, just without a fade.
-    public var inlineCodeFlashFill: Color { accent }
-    public var inlineCodeFlashText: Color {
-        isDark ? Color.black.opacity(0.92) : Color.white
-    }
 
     /// The thin rule running down the leading edge of a blockquote. A muted
     /// neutral, not the accent — a quote isn't interactive, so it shouldn't
@@ -209,10 +200,6 @@ public extension Theme {
         public static let stateDuration: Double = 0.22
         /// Exit: ~75% of `stateDuration` so dismissals feel quicker.
         public static let exitDuration: Double = 0.16
-        /// How long an inline-code chip holds its "copied" flash before
-        /// reverting (state feedback; fires under Reduce Motion too).
-        public static let flashHold: Double = 0.6
-
         public static let feedback: Animation = .easeOut(duration: feedbackDuration)
         public static let state: Animation = .easeOut(duration: stateDuration)
         public static let stateExit: Animation = .easeOut(duration: exitDuration)
@@ -221,52 +208,4 @@ public extension Theme {
 
 public extension EnvironmentValues {
     @Entry var theme: Theme = Theme(colorScheme: .light, scale: 1)
-
-    /// The reading view's click-to-copy feedback, injected once as a stable
-    /// object so a copy tap re-renders only the flashing chip (and the HUD) —
-    /// never the reading `body`, which would re-assert the scroll position on
-    /// the whole column. `nil` (the default, and always in Quick Look) means
-    /// no feedback surface is present and leaf views do zero flash work.
-    @Entry var inlineCopyFeedback: InlineCopyFeedback? = nil
-}
-
-/// Transient state for the inline-code click-to-copy affordance, owned by the
-/// reading view and shared with leaf blocks via `\.inlineCopyFeedback`. It's a
-/// reference type injected once (stable identity) so mutating `flashURL`/`pulse`
-/// invalidates only the views that *read* those properties — the flashing chip
-/// and the "Copied" HUD — and leaves the enclosing `ScrollView`/`LazyVStack`
-/// (and its bound scroll position) untouched. Always `nil` in Quick Look.
-@MainActor @Observable public final class InlineCopyFeedback {
-    public init() {}
-    /// The `marco-copy://` link of the chip currently flashing, or `nil`.
-    /// Read by leaf text views to tint exactly the run that was clicked.
-    public var flashURL: URL?
-    /// Bumped on every copy so the HUD re-shows even when the same chip is
-    /// copied twice in a row (`flashURL` alone wouldn't change).
-    public var pulse = 0
-}
-
-/// Applies the in-place "copied" flash onto a block's rendered
-/// `AttributedString`: if `flashURL` is set, every inline-code run carrying
-/// that exact `marco-copy://` link (the code chip that was clicked) inverts to
-/// the accent flash fill. Runs *outside* `InlineMarkdown`'s cache — like
-/// `applyingFindHighlight` — so flash-styled strings never pollute the cache,
-/// and it only recolors runs (no font/metric change) so a flashing chip can
-/// never shift layout. Returns `base` untouched, doing no work, when no chip
-/// is flashing.
-@MainActor
-func applyingCopiedFlash(
-    _ base: AttributedString, flashURL: URL?, theme: Theme
-) -> AttributedString {
-    guard let flashURL else { return base }
-    var copy = base
-    var didFlash = false
-    for run in copy.runs where run.link == flashURL {
-        // Flip the chip to its accent flash style — `InlineCodeChipRenderer`
-        // reads this and fills the accent surface; the text color is set here.
-        copy[run.range][InlineCodeChipAttribute.self] = .flash
-        copy[run.range].foregroundColor = theme.inlineCodeFlashText
-        didFlash = true
-    }
-    return didFlash ? copy : base
 }

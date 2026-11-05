@@ -142,9 +142,23 @@ targets:
     dependencies:
       - target: Marco
       - package: MarcoRendering
+      - package: MarcoCore
     settings:
       base:
         SWIFT_EMIT_LOC_STRINGS: NO
+        GENERATE_INFOPLIST_FILE: YES
+  MarcoQuickLookTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: App/Sources/MarcoQuickLook/PreviewViewController.swift
+      - path: App/Tests/MarcoQuickLookTests
+    dependencies:
+      - package: MarcoCore
+      - package: MarcoRendering
+    settings:
+      base:
         GENERATE_INFOPLIST_FILE: YES
 
 schemes:
@@ -159,5 +173,6 @@ schemes:
       gatherCoverageData: false
       targets:
         - name: MarcoTests
+        - name: MarcoQuickLookTests
     run:
       config: Debug

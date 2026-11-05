@@ -14,9 +14,6 @@ extension FocusedValues {
 struct MarcoCommands: Commands {
     @FocusedValue(\.windowModel) private var model
     @AppStorage("textScale") private var textScale: Double = 1.0
-    #if DEBUG
-    @AppStorage("debugTextKitReading") private var debugTextKitReading = false
-    #endif
 
     /// Bridged from `AppDelegate` (AppKit open panel) since Open is app-level,
     /// not window-level.
@@ -27,7 +24,6 @@ struct MarcoCommands: Commands {
     private let scaleStep = 0.1
 
     private var hasDocument: Bool { activeModel?.controller != nil }
-    private var hasMatches: Bool { (activeModel?.find.matchCount ?? 0) > 0 }
 
     // MARK: - Clipboard routing
 
@@ -37,43 +33,9 @@ struct MarcoCommands: Commands {
         NSApp.sendAction(selector, to: nil, from: nil)
     }
 
-    /// True when a real text-editing responder is focused — the ⌘E source
-    /// editor, or the field editor behind the ⌘F search field. Both are
-    /// `NSTextView`s; a selectable SwiftUI `Text` is not (with one focused,
-    /// the first responder is the window itself), which is what lets us tell
-    /// "the user is typing" apart from "the user is reading".
-    private var isEditingText: Bool {
-        NSApp.keyWindow?.firstResponder is NSTextView
-    }
-
-    /// The window these clipboard actions apply to.
-    ///
-    /// Resolved from the key window rather than `@FocusedValue`. `focusedValue`
-    /// only publishes while some view in the subtree holds SwiftUI focus, and
-    /// the reading view is a plain non-focusable `ScrollView` — so `model` is
-    /// routinely nil here even with a document plainly in front of the user.
-    /// That is what made ⌘A keep falling through to SwiftUI's per-block
-    /// selection and copy a single paragraph.
+    /// Resolve commands from the key window when SwiftUI focus is absent.
     private var activeModel: WindowModel? {
         model ?? DocumentOpener.shared.model(for: NSApp.keyWindow ?? NSApp.mainWindow)
-    }
-
-    private func selectAll() {
-        guard !isEditingText, let target = activeModel, target.canSelectAllDocument else {
-            Self.forward(#selector(NSResponder.selectAll(_:)))
-            return
-        }
-        target.selectAllDocument()
-    }
-
-    private func copy() {
-        // Whole document only when ⌘A claimed it. A drag-selection inside one
-        // paragraph still copies just that paragraph, via SwiftUI.
-        guard !isEditingText, let target = activeModel, target.isSelectAllActive else {
-            Self.forward(#selector(NSText.copy(_:)))
-            return
-        }
-        target.copySelection()
     }
 
     var body: some Commands {
@@ -90,7 +52,7 @@ struct MarcoCommands: Commands {
             Divider()
             Button("Save") { activeModel?.save() }
                 .keyboardShortcut("s", modifiers: .command)
-                .disabled(!hasDocument)
+                .disabled(!(activeModel?.canSave ?? false))
             Divider()
             Button("Export as PDF…") { activeModel?.exportPDF() }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
@@ -102,28 +64,16 @@ struct MarcoCommands: Commands {
 
         // MARK: Edit — clipboard
         //
-        // These replace SwiftUI's standard pasteboard items so ⌘A / ⌘C are
-        // *menu* key equivalents, which AppKit matches before the responder
-        // chain runs. That ordering is the whole point: the reading view is
-        // per-block `Text` with `.textSelection(.enabled)`, and once any
-        // paragraph has focus SwiftUI's own selection responder answers ⌘A
-        // first — so "select all" only ever grabbed the one block under the
-        // caret. Owning the key equivalent makes ⌘A mean the whole document,
-        // every time.
-        //
-        // Cut/Paste/Delete, and Copy when the document isn't wholly selected,
-        // forward straight back into the responder chain, so the ⌘E source
-        // editor, the ⌘F field, and dragging out a single paragraph all keep
-        // their normal behaviour.
+        // Keep menu key equivalents while the native reader/editor owns selection.
         CommandGroup(replacing: .pasteboard) {
             Button("Cut") { Self.forward(#selector(NSText.cut(_:))) }
                 .keyboardShortcut("x", modifiers: .command)
-            Button("Copy") { copy() }
+            Button("Copy") { Self.forward(#selector(NSText.copy(_:))) }
                 .keyboardShortcut("c", modifiers: .command)
             Button("Paste") { Self.forward(#selector(NSText.paste(_:))) }
                 .keyboardShortcut("v", modifiers: .command)
             Button("Delete") { Self.forward(#selector(NSText.delete(_:))) }
-            Button("Select All") { selectAll() }
+            Button("Select All") { Self.forward(#selector(NSResponder.selectAll(_:))) }
                 .keyboardShortcut("a", modifiers: .command)
         }
 
@@ -136,13 +86,13 @@ struct MarcoCommands: Commands {
             Divider()
             Button("Find…") { activeModel?.openFind() }
                 .keyboardShortcut("f", modifiers: .command)
-                .disabled(!hasDocument)
+                .disabled(!(activeModel?.canFind ?? false))
             Button("Find Next") { activeModel?.findNext() }
                 .keyboardShortcut("g", modifiers: .command)
-                .disabled(!hasMatches)
+                .disabled(!(activeModel?.canFind ?? false))
             Button("Find Previous") { activeModel?.findPrevious() }
                 .keyboardShortcut("g", modifiers: [.command, .shift])
-                .disabled(!hasMatches)
+                .disabled(!(activeModel?.canFind ?? false))
         }
 
         // MARK: View — sidebar, edit mode, zoom, follow mode
@@ -157,7 +107,7 @@ struct MarcoCommands: Commands {
                 activeModel?.toggleEditMode()
             }
             .keyboardShortcut("e", modifiers: .command)
-            .disabled(!hasDocument)
+            .disabled(activeModel?.controller?.isLoading != false || activeModel?.controller?.loadError != nil)
 
             Divider()
 
@@ -191,13 +141,6 @@ struct MarcoCommands: Commands {
                 .disabled(!(activeModel?.canGoForward ?? false))
         }
 
-        #if DEBUG
-        // MARK: Debug — M6 TextKit 2 reading surface (Phase 1, slice 1)
-        CommandMenu("Debug") {
-            Toggle("TextKit 2 Reading Surface", isOn: $debugTextKitReading)
-                .keyboardShortcut("t", modifiers: [.command, .control])
-        }
-        #endif
     }
 }
 

@@ -18,13 +18,13 @@ struct BlockDifferTests {
     /// the same, so this was a positional diff producing exactly one
     /// `.reloaded`. Under the NEW id scheme (contentHash + local
     /// same-hash occurrence index), the edited block's id changes but
-    /// every *other* block's id is untouched — the id-based LCS diff
+    /// every *other* block's id is untouched — the greedy identity diff
     /// still finds the same result here (a single differing block
     /// surrounded by two long common-id runs collapses to exactly one
     /// adjacent delete+insert pair), which `BlockDiffer` optionally
     /// reports as `.reloaded` for a nicer pulse animation. So the
     /// expected counts are unchanged from before, even though the
-    /// underlying reasoning (position vs. id-LCS) is different.
+    /// underlying reasoning (position vs. identity matching) is different.
     @Test func editingOneParagraphIn100BlockDocProducesExactlyOneChange() {
         let oldText = makeDocument(paragraphCount: 100)
         let newText = makeDocument(paragraphCount: 100, editing: 42)

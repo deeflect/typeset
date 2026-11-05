@@ -4,12 +4,9 @@ import Foundation
 /// file text, used by the reading view's clickable checkboxes (PLAN §6) to
 /// write `- [ ]` / `- [x]` back to disk without entering edit mode.
 ///
-/// Callers locate the line with `Block.startLine` (the owning list block's
-/// start, body-relative) plus the item's own line offset within that
-/// block's `rawText` (`ListModel.Item.checkboxLineOffset`, itself relative
-/// to the block, so `blockStartLine + itemLineOffset` is the absolute
-/// body-relative line). `flip` re-derives frontmatter/body itself so the
-/// caller never has to think about the frontmatter offset.
+/// Callers provide the owning block's body-relative start line plus the
+/// item's offset within it. `flip` accounts for frontmatter and preserves
+/// the file's original line endings.
 public enum CheckboxWriteBack {
 
     /// Attempts to flip the checkbox at `blockStartLine + itemLineOffset`
@@ -26,18 +23,19 @@ public enum CheckboxWriteBack {
         guard blockStartLine >= 0, itemLineOffset >= 0 else { return nil }
 
         let normalized = MarkdownParser.normalizingLineEndings(fileText)
-        let (frontmatter, body) = MarkdownParser.splitFrontmatter(normalized)
-        var bodyLines = body.components(separatedBy: "\n")
-        let lineIndex = blockStartLine + itemLineOffset
-        guard lineIndex >= 0, lineIndex < bodyLines.count else { return nil }
-        guard let newLine = flippedLine(bodyLines[lineIndex], checked: checked) else { return nil }
-
-        bodyLines[lineIndex] = newLine
-        let newBody = bodyLines.joined(separator: "\n")
-        if let frontmatter {
-            return frontmatter + "\n" + newBody
+        let lineIndex = MarkdownParser.bodyLineOffset(in: normalized) + blockStartLine + itemLineOffset
+        var start = fileText.startIndex
+        for _ in 0..<lineIndex {
+            guard let newline = fileText[start...].firstIndex(where: \.isNewline) else { return nil }
+            start = fileText.index(after: newline)
         }
-        return newBody
+        let end = fileText[start...].firstIndex(where: \.isNewline) ?? fileText.endIndex
+        let original = String(fileText[start..<end])
+        let bom = original.hasPrefix("\u{FEFF}") ? "\u{FEFF}" : ""
+        guard let flipped = flippedLine(String(original.dropFirst(bom.count)), checked: checked) else { return nil }
+        var result = fileText
+        result.replaceSubrange(start..<end, with: bom + flipped)
+        return result
     }
 
     /// Matches a task-list item marker at the start of a line (after

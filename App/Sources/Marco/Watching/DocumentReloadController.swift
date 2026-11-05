@@ -2,15 +2,13 @@ import AppKit
 import Foundation
 import MarcoCore
 import Observation
-import SwiftUI
 import os
 import MarcoRendering
 
 /// Owns everything about keeping a `DocumentWindow` in sync with its file
 /// on disk: the initial parse, the `FileWatcher`, the off-main
 /// reparse+diff pipeline, scroll anchoring, the change-pulse set, and the
-/// per-window follow-mode toggle. `DocumentWindow`/`DocumentRenderer` just
-/// read this via `@Bindable`.
+/// per-window follow-mode toggle.
 @Observable
 @MainActor
 final class DocumentReloadController {
@@ -18,6 +16,7 @@ final class DocumentReloadController {
 
     private(set) var blocks: [Block] = []
     private(set) var loadError: String?
+    private(set) var isLoading = true
     /// True once the file has been missing for longer than the watcher's
     /// grace period (PLAN §4: survive delete/recreate without flashing
     /// this for the common "delete then immediately recreate" save
@@ -65,18 +64,26 @@ final class DocumentReloadController {
         }
     }
 
-    /// Bound to `DocumentRenderer`'s `ScrollView` via `.scrollPosition($_)`
-    /// so this controller can both read "what's on screen right now"
-    /// (for anchor selection) and drive scroll (to hold the anchor steady,
-    /// or to follow the newest change).
-    var scrollPosition = ScrollPosition(idType: String.self)
+    var visibleBlockID: String?
+    private(set) var requestedBlockID: String?
+    func requestJump(to id: String) { requestedBlockID = id }
+    func takeRequestedBlockID() -> String? {
+        defer { requestedBlockID = nil }
+        return requestedBlockID
+    }
 
     private var lastText: String = ""
+    private var reloadGeneration = 0
+    private var editRevision = 0
+    private var approvedDiskText: String?
+    private var isStopped = false
     /// The current Markdown source: the live edit buffer while editing,
     /// otherwise the last text read from disk. Used by Copy as Rich
     /// Text's plain-Markdown pasteboard fallback.
     var currentText: String { isEditing ? editedText : lastText }
     private var watcher: FileWatcher?
+    private var initialTask: Task<Void, Never>?
+    private var reloadTask: Task<Void, Never>?
     private let signposter = OSSignposter(subsystem: "com.dee.marco.draft", category: "LiveReload")
     private var pulseClearTask: Task<Void, Never>?
     /// Whether this controller holds an active security-scope grant on
@@ -96,38 +103,45 @@ final class DocumentReloadController {
     /// end-to-end without needing a visible window. `nil` in normal app
     /// use.
     var onReloadApplied: ((ReloadReport) -> Void)?
+    var onInitialLoaded: (() -> Void)?
+    var onDocumentChanged: (() -> Void)?
+    var onReloadReady: (() -> Void)?
 
     init(url: URL) {
         self.url = url
         self.followModeEnabled = UserDefaults.standard.bool(forKey: "followMode:\(url.path)")
     }
 
-    /// Loads the file synchronously (cheap enough for typical files; large
-    /// files are a pre-existing M1 concern, not new here) and starts
-    /// watching for further changes. Call once per window/url.
+    /// Starts watching and parses the initial document off the main actor.
     func start() {
+        isStopped = false
         isAccessingSecurityScope = url.startAccessingSecurityScopedResource()
         FolderAccessStore.shared.noteDocumentOpened(url)
-        loadInitial()
         let watcher = FileWatcher(url: url)
         watcher.onReload = { [weak self] in
             Task { @MainActor in self?.handleExternalChange() }
         }
         watcher.onRemovedChanged = { [weak self] removed in
-            Task { @MainActor in self?.isFileRemoved = removed }
+            Task { @MainActor [weak self] in
+                guard self?.isStopped == false else { return }
+                self?.isFileRemoved = removed
+            }
         }
         self.watcher = watcher
+        watcher.whenReady { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, !self.isStopped else { return }
+                self.loadInitial()
+            }
+        }
     }
 
-    /// Called on window close / app termination. PLAN §3: no "unsaved
-    /// changes" modal for a simple viewer — save silently if we have write
-    /// access (failure is unobservable at this point since the window is
-    /// going away regardless; a real write failure would already have
-    /// surfaced via `saveError` from an earlier ⌘S/⌘E attempt).
+    /// Clean up only after a transition has been accepted.
     func stop() {
-        if isEditing, conflictState != .clean {
-            save()
-        }
+        isStopped = true
+        reloadGeneration += 1
+        initialTask?.cancel()
+        reloadTask?.cancel()
         watcher = nil
         pulseClearTask?.cancel()
         FolderAccessStore.shared.noteDocumentClosed(url)
@@ -138,15 +152,34 @@ final class DocumentReloadController {
     }
 
     private func loadInitial() {
-        do {
-            let didAccess = url.startAccessingSecurityScopedResource()
-            defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
-            let text = try String(contentsOf: url, encoding: .utf8)
-            blocks = MarkdownParser.parse(text)
-            lastText = text
-            loadError = nil
-        } catch {
-            loadError = "Couldn't open \(url.lastPathComponent): \(error.localizedDescription)"
+        initialTask?.cancel()
+        isLoading = true
+        reloadGeneration += 1
+        let generation = reloadGeneration
+        let fileURL = url
+        initialTask = Task.detached(priority: .userInitiated) { [weak self] in
+            guard !Task.isCancelled else { return }
+            let result = Result { () -> (String, [Block]) in
+                let didAccess = fileURL.startAccessingSecurityScopedResource()
+                defer { if didAccess { fileURL.stopAccessingSecurityScopedResource() } }
+                let text = try String(contentsOf: fileURL, encoding: .utf8)
+                try Task.checkCancellation()
+                return (text, MarkdownParser.parse(text))
+            }
+            await MainActor.run { [weak self] in
+                guard let self, !self.isStopped, self.reloadGeneration == generation else { return }
+                self.isLoading = false
+                switch result {
+                case .success(let (text, blocks)):
+                    self.lastText = text
+                    self.blocks = blocks
+                    self.loadError = nil
+                case .failure(let error):
+                    self.loadError = "Couldn't open \(fileURL.lastPathComponent): \(error.localizedDescription)"
+                }
+                self.onInitialLoaded?()
+                if self.loadError == nil { self.onDocumentChanged?() }
+            }
         }
     }
 
@@ -158,9 +191,12 @@ final class DocumentReloadController {
     /// → surface the non-modal "Keep mine / Take theirs" banner and leave
     /// the buffer untouched until the user decides. Never a modal dialog.
     private func handleExternalChange() {
-        guard loadError == nil else { return }
+        guard !isStopped else { return }
+        if isLoading { loadInitial(); return }
+        if loadError != nil { loadInitial(); return }
         hasExternalChanges = true
         if isEditing {
+            guard (try? String(contentsOf: url, encoding: .utf8)) != lastText else { return }
             let (newState, action) = EditConflictMachine.transition(state: conflictState, event: .externalChange)
             conflictState = newState
             if action == .showConflictBanner {
@@ -173,6 +209,10 @@ final class DocumentReloadController {
     }
 
     private func performReload() {
+        reloadTask?.cancel()
+        reloadGeneration += 1
+        let generation = reloadGeneration
+        let revision = editRevision
         let oldBlocks = blocks
         let oldText = lastText
         let fileURL = url
@@ -181,7 +221,7 @@ final class DocumentReloadController {
         let interval = signposter.beginInterval("liveReload", id: signpostID)
         let startTime = DispatchTime.now()
 
-        Task.detached(priority: .userInitiated) { [signposter] in
+        reloadTask = Task.detached(priority: .userInitiated) { [signposter] in
             let result = computeReload(url: fileURL, oldText: oldText, oldBlocks: oldBlocks)
             guard let result else {
                 await MainActor.run { signposter.endInterval("liveReload", interval) }
@@ -189,15 +229,26 @@ final class DocumentReloadController {
             }
             await MainActor.run { [weak self] in
                 signposter.endInterval("liveReload", interval)
-                self?.apply(result, startTime: startTime)
+                self?.onReloadReady?()
+                guard let self, !self.isStopped, self.reloadGeneration == generation else { return }
+                if self.isEditing && (self.editRevision != revision || self.conflictState != .clean) {
+                    if self.conflictState == .dirty {
+                        self.conflictState = .conflictPending
+                    } else if self.conflictState == .clean {
+                        self.performReload()
+                    }
+                    return
+                }
+                self.apply(result, startTime: startTime)
             }
         }
     }
 
     private func apply(_ result: ReloadResult, startTime: DispatchTime) {
+        if isEditing, conflictState == .clean { editedText = result.newText }
         guard result.newText != lastText else { return }
 
-        let currentAnchorID = scrollPosition.viewID as? String
+        let currentAnchorID = visibleBlockID
         let anchorIndex = currentAnchorID.flatMap { id in blocks.firstIndex { $0.id == id } } ?? 0
         let anchorTarget = ScrollAnchor.selectAnchor(
             oldBlocks: blocks, changes: result.changes, anchorIndex: anchorIndex)
@@ -222,35 +273,9 @@ final class DocumentReloadController {
         }
         blocks = result.newBlocks
         lastText = result.newText
-        if isEditing {
-            // Only reachable here when the conflict machine decided
-            // `.silentReload` (clean buffer) — a dirty buffer short-circuits
-            // in `handleExternalChange` before ever reaching this pipeline.
-            editedText = result.newText
-        }
 
-        if let anchorTarget {
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                scrollPosition.scrollTo(id: anchorTarget)
-            }
-        }
-
-        if followModeEnabled, let firstChangedID {
-            // Follow mode auto-scrolls to the newest change. Honor Reduce
-            // Motion (no @Environment here — this is a controller, not a
-            // view — so read the AppKit accessibility flag directly).
-            if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-                var transaction = Transaction()
-                transaction.disablesAnimations = true
-                withTransaction(transaction) { scrollPosition.scrollTo(id: firstChangedID) }
-            } else {
-                withAnimation(.easeInOut(duration: 0.35)) {
-                    scrollPosition.scrollTo(id: firstChangedID)
-                }
-            }
-        }
+        requestedBlockID = followModeEnabled ? (firstChangedID ?? anchorTarget) : anchorTarget
+        onDocumentChanged?()
 
         if !changedIDs.isEmpty {
             schedulePulseClear(changedIDs)
@@ -281,12 +306,13 @@ final class DocumentReloadController {
     /// reading viewport stays visible at the top of the editor — `nil` if
     /// there's no scroll anchor yet (top of document is fine).
     func enterEditMode() -> Int? {
+        guard !isEditing, !isLoading, loadError == nil else { return nil }
         editedText = lastText
         isEditing = true
         conflictState = .clean
         window?.isDocumentEdited = false
 
-        guard let anchorID = scrollPosition.viewID as? String,
+        guard let anchorID = visibleBlockID,
               let block = blocks.first(where: { $0.id == anchorID }),
               let bodyLine = BlockPosition.startLine(of: block)
         else { return nil }
@@ -302,16 +328,14 @@ final class DocumentReloadController {
     /// keeps the buffer/editing state exactly as `save()` left it, so
     /// nothing is lost.
     @discardableResult
-    func exitEditMode(caretLine: Int?) -> String? {
-        if conflictState != .clean {
-            save()
-        }
+    func exitEditMode(caretLine: Int?) -> (allowed: Bool, anchor: String?) {
+        guard prepareToLeave() else { return (false, nil) }
         isEditing = false
 
-        guard let caretLine else { return nil }
+        guard let caretLine else { return (true, nil) }
         let bodyLine = caretLine - MarkdownParser.bodyLineOffset(in: editedText)
-        guard let index = BlockPosition.blockIndex(forLine: bodyLine, in: blocks) else { return nil }
-        return blocks[index].id
+        guard let index = BlockPosition.blockIndex(forLine: bodyLine, in: blocks) else { return (true, nil) }
+        return (true, blocks[index].id)
     }
 
     /// Notifies the controller that the editor's buffer text changed,
@@ -319,6 +343,11 @@ final class DocumentReloadController {
     /// accordingly. Cheap to call on every keystroke: the conflict machine
     /// only actually transitions on the clean↔dirty edge.
     func noteEditedTextChanged(_ text: String) {
+        guard isEditing else { return }
+        if text != editedText {
+            editRevision += 1
+            approvedDiskText = nil
+        }
         editedText = text
         let isDirtyNow = text != lastText
         switch (conflictState, isDirtyNow) {
@@ -338,29 +367,55 @@ final class DocumentReloadController {
     /// clean and reparses so the reading view is ready the moment ⌘E goes
     /// back. On failure, leaves the buffer dirty and sets `saveError` for
     /// the window's non-modal banner (Save As… fallback), per PLAN §3.
-    func save() {
-        watcher?.expectOwnWrite()
+    @discardableResult
+    func save() -> Bool {
+        guard isEditing, conflictState != .clean else { return false }
+        guard conflictState != .conflictPending else { return false }
         do {
+            let diskText = try String(contentsOf: url, encoding: .utf8)
+            if diskText != (approvedDiskText ?? lastText) {
+                conflictState = .conflictPending
+                return false
+            }
             try Data(editedText.utf8).write(to: url, options: .atomic)
+            watcher?.expectOwnWrite(contents: Data(editedText.utf8))
+            reloadGeneration += 1
             lastText = editedText
             blocks = MarkdownParser.parse(editedText)
+            onDocumentChanged?()
             conflictState = EditConflictMachine.transition(state: conflictState, event: .bufferSettled).state
             window?.isDocumentEdited = false
             saveError = nil
+            approvedDiskText = nil
+            return true
         } catch {
             saveError = "Couldn't save \(url.lastPathComponent): \(error.localizedDescription)"
+            return false
         }
+    }
+
+    /// Used before navigation, closing, and app termination.
+    func prepareToLeave() -> Bool {
+        guard isEditing, conflictState != .clean else { return true }
+        return save()
     }
 
     /// "Keep mine" at the conflict banner: dismiss it, keep the buffer
     /// as-is — the next ⌘S overwrites disk.
     func resolveConflictKeepMine() {
+        guard conflictState == .conflictPending else { return }
+        guard let diskText = try? String(contentsOf: url, encoding: .utf8) else { return }
+        approvedDiskText = diskText
         conflictState = EditConflictMachine.transition(state: conflictState, event: .keepMine).state
     }
 
     /// "Take theirs" at the conflict banner: reload from disk through the
     /// normal position-preserving path, discarding the in-progress edits.
     func resolveConflictTakeTheirs() {
+        guard conflictState == .conflictPending else { return }
+        approvedDiskText = nil
+        reloadGeneration += 1
+        editRevision += 1
         conflictState = EditConflictMachine.transition(state: conflictState, event: .takeTheirs).state
         performReload()
     }
@@ -374,7 +429,11 @@ final class DocumentReloadController {
     /// was registered — falls back to a normal reload instead of writing
     /// blind, per the M3 spec.
     func toggleCheckbox(blockStartLine: Int, itemLineOffset: Int, checked: Bool) {
-        guard !isEditing else { return }
+        guard !isEditing, !isLoading else { return }
+        guard let diskText = try? String(contentsOf: url, encoding: .utf8), diskText == lastText else {
+            handleExternalChange()
+            return
+        }
         guard let newText = CheckboxWriteBack.flip(
             fileText: lastText, blockStartLine: blockStartLine, itemLineOffset: itemLineOffset, checked: checked
         ) else {
@@ -382,11 +441,13 @@ final class DocumentReloadController {
             return
         }
 
-        watcher?.expectOwnWrite()
         do {
             try Data(newText.utf8).write(to: url, options: .atomic)
+            watcher?.expectOwnWrite(contents: Data(newText.utf8))
+            reloadGeneration += 1
             blocks = MarkdownParser.parse(newText)
             lastText = newText
+            onDocumentChanged?()
         } catch {
             // Write failed (permissions/volume gone); the in-memory model
             // is untouched, so the UI simply doesn't reflect the click —
@@ -416,6 +477,7 @@ private struct ReloadResult: Sendable {
 /// isolation into the `Task.detached` closure that calls it — only value
 /// types cross that boundary.
 private nonisolated func computeReload(url: URL, oldText: String, oldBlocks: [Block]) -> ReloadResult? {
+    guard !Task.isCancelled else { return nil }
     let didAccess = url.startAccessingSecurityScopedResource()
     defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
     guard let newText = try? String(contentsOf: url, encoding: .utf8) else {
@@ -425,6 +487,7 @@ private nonisolated func computeReload(url: URL, oldText: String, oldBlocks: [Bl
         // reload attempt; the next settled write will trigger another.
         return nil
     }
+    guard !Task.isCancelled else { return nil }
     let newBlocks: [Block] = newText.isEmpty
         ? []
         : MarkdownParser.reparseIncremental(oldText: oldText, newText: newText, oldBlocks: oldBlocks)

@@ -1,4 +1,5 @@
 import Foundation
+import Markdown
 
 /// A single entry in a document's flat outline (table of contents),
 /// derived from its top-level heading blocks.
@@ -33,7 +34,7 @@ public enum OutlineBuilder {
             let depth = stack.count
             stack.append(level)
 
-            var title = BlockStructure.headingText(block.rawText)
+            var title = plainHeading(block.rawText)
             if title.isEmpty {
                 title = block.rawText.trimmingCharacters(in: .whitespacesAndNewlines)
             }
@@ -45,5 +46,17 @@ public enum OutlineBuilder {
         }
 
         return items
+    }
+
+    private static func plainHeading(_ source: String) -> String {
+        let document = Document(parsing: source)
+        guard let heading = document.children.first(where: { $0 is Heading }) else { return source }
+        func plain(_ markup: any Markup) -> String {
+            if let text = markup as? Markdown.Text { return text.string }
+            if let code = markup as? InlineCode { return code.code }
+            if markup is SoftBreak || markup is LineBreak { return " " }
+            return markup.children.map(plain).joined()
+        }
+        return plain(heading).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

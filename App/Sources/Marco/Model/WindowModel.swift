@@ -19,10 +19,12 @@ final class WindowModel {
     /// The reload controller for whatever file is showing right now. Rebuilt
     /// on navigation; `nil` only for the empty-state window (no file).
     private(set) var controller: DocumentReloadController?
-
-    /// ⌘F session (query, matches, current index). Lives here so it persists
-    /// across navigation and survives live reloads.
-    let find = FindSession()
+    private(set) var readingSnapshot: NativeMarkdownDocument?
+    private(set) var metadataExpanded = false
+    let nativeReader = NativeMarkdownReadingView.Controller()
+    private var snapshotGeneration = 0
+    private var snapshotTask: Task<Void, Never>?
+    private var pendingFragment: String?
 
     /// The heading whose section currently contains the top of the viewport,
     /// tracked off the reading view's scroll position (debounced). Drives the
@@ -37,38 +39,6 @@ final class WindowModel {
     /// The toolbar's outline button view, captured so ⌘1 can pop the native
     /// menu up anchored to it (mouse clicks anchor to it directly).
     weak var outlineAnchor: NSView?
-
-    /// True while Edit ▸ Select All has claimed the whole document.
-    ///
-    /// The reading view is a stack of per-block `Text` views, and SwiftUI text
-    /// selection cannot span two of them — dragging across the document only
-    /// ever selects within one block, which is why "copy the whole thing"
-    /// didn't work. Select-all is therefore modelled explicitly: the reading
-    /// view tints the entire content column, and Copy takes the whole
-    /// document. (A real continuous selection needs the single-text-view
-    /// reading surface M6 is building.)
-    private(set) var isSelectAllActive = false
-
-    /// Select All applies to a document that isn't already in the ⌘E source
-    /// editor (which has its own, real, selection).
-    var canSelectAllDocument: Bool { controller != nil && controller?.isEditing != true }
-
-    func selectAllDocument() {
-        guard canSelectAllDocument else { return }
-        isSelectAllActive = true
-    }
-
-    func deselectAll() {
-        guard isSelectAllActive else { return }
-        isSelectAllActive = false
-    }
-
-    /// Edit ▸ Copy (⌘C) with the whole document selected. Puts RTF, HTML and
-    /// plain Markdown on the pasteboard, same as ⇧⌘C.
-    func copySelection() {
-        guard isSelectAllActive else { return }
-        copyAsRichText()
-    }
 
     /// The image currently shown in the full-window lightbox (PLAN §6), or
     /// `nil` when none. Presented at the window's top level by `DocumentWindow`
@@ -98,12 +68,27 @@ final class WindowModel {
 
     weak var window: NSWindow? {
         didSet {
-            guard window !== oldValue else { return }
+            if window === oldValue {
+                if let window, let closeDelegate, window.delegate !== closeDelegate {
+                    closeDelegate.forwardedDelegate = window.delegate
+                    window.delegate = closeDelegate
+                }
+                return
+            }
+            if let oldValue, oldValue.delegate === closeDelegate {
+                oldValue.delegate = closeDelegate?.forwardedDelegate
+            }
+            if let window {
+                let proxy = WindowCloseDelegate(model: self, forwardedDelegate: window.delegate)
+                closeDelegate = proxy
+                window.delegate = proxy
+            }
             controller?.window = window
             applyWindowIdentity()
             observeLiveResize(of: window)
         }
     }
+    private var closeDelegate: WindowCloseDelegate?
 
     /// Keeps the window's `title` and `representedURL` pointed at the live
     /// document. The title bar itself is hidden (`.hiddenTitleBar`), but the
@@ -162,6 +147,8 @@ final class WindowModel {
     }
 
     func stop() {
+        snapshotGeneration += 1
+        snapshotTask?.cancel()
         controller?.stop()
         hintClearTask?.cancel()
         liveResizeObservers.forEach { NotificationCenter.default.removeObserver($0) }
@@ -169,15 +156,27 @@ final class WindowModel {
     }
 
     private func activate(_ url: URL, restoreScroll: Bool) {
-        deselectAll()
+        metadataExpanded = false
+        snapshotGeneration += 1
+        snapshotTask?.cancel()
+        readingSnapshot = nil
         controller?.stop()
         let controller = DocumentReloadController(url: url)
         controller.window = window
-        // Reuse the bench-only reload hook (unused in the live app) to keep the
-        // open find session in lockstep with the document as it reloads.
-        controller.onReloadApplied = { [weak self] _ in
-            guard let self, self.find.isActive else { return }
-            self.find.rebuildSegments(from: controller.blocks)
+        controller.onInitialLoaded = { [weak self, weak controller] in
+            guard let self, let controller else { return }
+            if restoreScroll, let anchor = self.savedAnchor(for: url),
+               controller.blocks.contains(where: { $0.id == anchor }) {
+                self.nativeReader.queueJump(toBlock: anchor)
+            }
+            if let fragment = self.pendingFragment {
+                self.pendingFragment = nil
+                self.scrollToAnchor(fragment)
+            }
+        }
+        controller.onDocumentChanged = { [weak self, weak controller] in
+            guard let self, let controller else { return }
+            self.buildSnapshot(for: controller)
         }
         self.controller = controller
         controller.start()
@@ -188,14 +187,39 @@ final class WindowModel {
         applyWindowIdentity()
         // Remember this document for the empty-state home screen (PLAN §6).
         RecentDocumentsStore.shared.record(url)
+    }
 
-        if find.isActive {
-            find.rebuildSegments(from: controller.blocks)
+    func setReadingTheme(_ theme: Theme) {
+        readingTheme = theme
+        if let controller, !controller.isLoading { buildSnapshot(for: controller) }
+    }
+
+    private func buildSnapshot(for controller: DocumentReloadController) {
+        snapshotGeneration += 1
+        let generation = snapshotGeneration
+        snapshotTask?.cancel()
+        let source = controller.currentText
+        let blocks = controller.blocks
+        let theme = readingTheme
+        let url = controller.url
+        let expanded = metadataExpanded
+        snapshotTask = Task.detached(priority: .userInitiated) { [weak self] in
+            guard !Task.isCancelled else { return }
+            guard let snapshot = try? NativeMarkdownDocument.buildCancellable(
+                source: source, blocks: blocks, theme: theme, documentURL: url, metadataExpanded: expanded
+            ) else { return }
+            await MainActor.run { [weak self] in
+                guard let self, self.snapshotGeneration == generation else { return }
+                if let jump = controller.takeRequestedBlockID() { self.nativeReader.queueJump(toBlock: jump) }
+                if !controller.pulsedBlockIDs.isEmpty { self.nativeReader.queuePulse(blockIDs: controller.pulsedBlockIDs) }
+                self.readingSnapshot = snapshot
+            }
         }
-        if restoreScroll, let anchor = savedAnchor(for: url),
-           controller.blocks.contains(where: { $0.id == anchor }) {
-            controller.scrollPosition.scrollTo(id: anchor)
-        }
+    }
+
+    func toggleMetadata() {
+        metadataExpanded.toggle()
+        if let controller { buildSnapshot(for: controller) }
     }
 
     // MARK: - Navigation (relative .md links + back/forward)
@@ -210,6 +234,7 @@ final class WindowModel {
             presentAccessHint(for: std)
             return
         }
+        guard controller?.prepareToLeave() ?? true else { return }
         saveScrollAnchor()
         if historyIndex < history.count - 1 {
             history.removeSubrange((historyIndex + 1)...)
@@ -221,6 +246,7 @@ final class WindowModel {
 
     func goBack() {
         guard canGoBack else { return }
+        guard controller?.prepareToLeave() ?? true else { return }
         saveScrollAnchor()
         historyIndex -= 1
         activate(history[historyIndex], restoreScroll: true)
@@ -228,6 +254,7 @@ final class WindowModel {
 
     func goForward() {
         guard canGoForward else { return }
+        guard controller?.prepareToLeave() ?? true else { return }
         saveScrollAnchor()
         historyIndex += 1
         activate(history[historyIndex], restoreScroll: true)
@@ -292,15 +319,41 @@ final class WindowModel {
     /// (GitHub-style anchors). Returns true if a heading matched.
     @discardableResult
     func scrollToAnchor(_ fragment: String) -> Bool {
-        guard let controller else { return false }
+        guard controller != nil else { return false }
         let target = HeadingSlug.normalize(fragment)
-        for block in controller.blocks {
-            guard case .heading = block.kind else { continue }
-            let slug = HeadingSlug.slug(BlockStructureCache.shared.headingText(for: block))
+        for item in outlineItems {
+            let slug = HeadingSlug.slug(item.title)
             if slug == target {
-                controller.scrollPosition.scrollTo(id: block.id)
+                if readingSnapshot == nil { nativeReader.queueJump(toBlock: item.id) }
+                else { nativeReader.jump(toBlock: item.id) }
                 return true
             }
+        }
+        return false
+    }
+
+    func openReadingLink(_ url: URL) -> Bool {
+        guard url.isFileURL || url.scheme == nil else { return false }
+        let target = url.scheme == nil
+            ? URL(string: url.relativeString, relativeTo: currentURL?.deletingLastPathComponent())?.absoluteURL ?? url
+            : url
+        var parts = URLComponents(url: target, resolvingAgainstBaseURL: false)
+        let fragment = parts?.fragment
+        parts?.fragment = nil
+        let file = (parts?.url ?? target).standardizedFileURL
+        if file == currentURL?.standardizedFileURL {
+            if let fragment { _ = scrollToAnchor(fragment) }
+            return true
+        }
+        if ["md", "markdown", "mdown"].contains(file.pathExtension.lowercased()) {
+            pendingFragment = fragment
+            navigate(to: file)
+            if currentURL != file { pendingFragment = nil }
+            return true
+        }
+        if FileManager.default.fileExists(atPath: file.path) {
+            NSWorkspace.shared.activateFileViewerSelecting([file])
+            return true
         }
         return false
     }
@@ -308,33 +361,30 @@ final class WindowModel {
     // MARK: - Find
 
     func openFind() {
-        guard let controller else { return }
-        deselectAll()
-        find.open(blocks: controller.blocks)
+        if controller?.isEditing == true { editorHandle.find(.showFindInterface) }
+        else { nativeReader.showFind() }
     }
 
-    func closeFind() { find.close() }
-
     /// Advances to the next/previous match and scrolls it into view.
-    func findNext() { find.next(); scrollToCurrentMatch() }
-    func findPrevious() { find.previous(); scrollToCurrentMatch() }
-
-    func scrollToCurrentMatch() {
-        guard let blockID = find.currentBlockID, let controller else { return }
-        controller.scrollPosition.scrollTo(id: blockID)
+    func findNext() {
+        if controller?.isEditing == true { editorHandle.find(.nextMatch) }
+        else { nativeReader.findNext() }
+    }
+    func findPrevious() {
+        if controller?.isEditing == true { editorHandle.find(.previousMatch) }
+        else { nativeReader.findPrevious() }
     }
 
     // MARK: - Edit mode (⌘E), position-preserving in both directions
 
     func toggleEditMode() {
         guard let controller else { return }
-        deselectAll()
         if controller.isEditing {
             let caretLine = editorHandle.caretLine()
-            if let targetID = controller.exitEditMode(caretLine: caretLine) {
-                var transaction = Transaction()
-                transaction.disablesAnimations = true
-                withTransaction(transaction) { controller.scrollPosition.scrollTo(id: targetID) }
+            let result = controller.exitEditMode(caretLine: caretLine)
+            guard result.allowed else { return }
+            if let targetID = result.anchor {
+                nativeReader.jump(toBlock: targetID)
             }
         } else {
             pendingEditorScrollLine = controller.enterEditMode()
@@ -345,20 +395,46 @@ final class WindowModel {
 
     func save() { controller?.save() }
 
-    func copyAsRichText() {
+    @discardableResult
+    func saveAs(to destination: URL) -> Bool {
+        guard let controller, controller.isEditing else { return false }
+        let destination = destination.standardizedFileURL
+        guard destination != currentURL else {
+            controller.saveError = "Choose a different file for Save As."
+            return false
+        }
+        do {
+            try Data(controller.editedText.utf8).write(to: destination, options: .atomic)
+            history[historyIndex] = destination
+            activate(destination, restoreScroll: false)
+            return true
+        } catch {
+            controller.saveError = "Couldn't save to \(destination.lastPathComponent): \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    var canSave: Bool { controller?.isEditing == true && controller?.conflictState == .dirty }
+    var canFind: Bool {
+        guard let controller else { return false }
+        return controller.isEditing || (!controller.isLoading && readingSnapshot != nil)
+    }
+    func prepareToClose() -> Bool { controller?.prepareToLeave() ?? true }
+
+    func copyAsRichText(pasteboard: NSPasteboard = .general) {
         guard let controller else { return }
-        RichTextExporter.copyAsRichText(blocks: controller.blocks, theme: readingTheme, plainMarkdown: controller.currentText)
+        RichTextExporter.copyLiveSource(controller.currentText, theme: readingTheme, url: controller.url, pasteboard: pasteboard)
     }
 
     func exportPDF() {
         guard let controller else { return }
         let name = (currentURL?.deletingPathExtension().lastPathComponent ?? "Document") + ".pdf"
-        PDFExporter.exportPDF(blocks: controller.blocks, suggestedName: name)
+        PDFExporter.exportPDF(source: controller.currentText, url: controller.url, suggestedName: name)
     }
 
     func printDocument() {
         guard let controller else { return }
-        PDFExporter.print(blocks: controller.blocks)
+        PDFExporter.print(source: controller.currentText, url: controller.url)
     }
 
     // MARK: - Outline dropdown
@@ -409,7 +485,7 @@ final class WindowModel {
     }
 
     /// Debounced current-section tracking off the reading view's top-most
-    /// block. Called by `DocumentRenderer` on every scroll-position change.
+    /// block. Called by the native reader as its visible block changes.
     func trackOutline(topBlockID: String?) {
         outlineTrackTask?.cancel()
         outlineTrackTask = Task { [weak self] in
@@ -441,43 +517,22 @@ final class WindowModel {
         return current
     }
 
-    /// The heading an outline tap just jumped to, tagged with a token so the
-    /// reading view re-fires the arrival pulse even on a repeat tap of the same
-    /// row. `nil` until the first outline jump.
-    struct OutlineArrival: Equatable {
-        var id: String
-        var token: Int
-    }
-    private(set) var outlineArrival: OutlineArrival?
-    private var outlineArrivalToken = 0
-
-    /// Jumps the reading view to a heading picked in the outline, anchoring it
-    /// to the top of the viewport. The jump is instant and exact: an animated
-    /// `scrollTo` over the `LazyVStack`'s *estimated* offsets overshoots and
-    /// snaps, and SwiftUI's per-frame scroll primitives are too imprecise to
-    /// glide onto the anchor cleanly. Instead the landing is instant and a brief
-    /// arrival pulse on the target heading carries the sense of motion (skipped
-    /// under Reduce Motion, which gates only the pulse).
+    /// Jumps to a heading and briefly pulses its text as arrival feedback.
     func scrollToHeading(_ id: String, reduceMotion: Bool) {
-        guard let controller else { return }
-        deselectAll()
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) { controller.scrollPosition.scrollTo(id: id, anchor: .top) }
+        guard controller != nil else { return }
+        nativeReader.jump(toBlock: id)
         // Move the checkmark to the jumped-to heading now, and hold off the
         // scroll tracker so it doesn't re-derive (and flicker) the same value.
         currentOutlineID = id
         suppressOutlineTrackingUntil = Date().addingTimeInterval(0.35)
-        guard !reduceMotion else { return }
-        outlineArrivalToken &+= 1
-        outlineArrival = OutlineArrival(id: id, token: outlineArrivalToken)
+        if !reduceMotion { nativeReader.pulse(blockIDs: [id]) }
     }
 
     // MARK: - Scroll memory
 
     private func saveScrollAnchor() {
         guard let controller, let url = currentURL,
-              let id = controller.scrollPosition.viewID as? String else { return }
+              let id = controller.visibleBlockID else { return }
         scrollMemory[url.path] = id
         UserDefaults.standard.set(id, forKey: scrollKey(url))
     }
@@ -487,6 +542,31 @@ final class WindowModel {
     }
 
     private func scrollKey(_ url: URL) -> String { "scrollAnchor:\(url.path)" }
+}
+
+/// Intercepts close without dropping SwiftUI's existing window delegate.
+@MainActor
+private final class WindowCloseDelegate: NSObject, NSWindowDelegate {
+    weak var model: WindowModel?
+    nonisolated(unsafe) weak var forwardedDelegate: NSWindowDelegate?
+
+    init(model: WindowModel, forwardedDelegate: NSWindowDelegate?) {
+        self.model = model
+        self.forwardedDelegate = forwardedDelegate
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard model?.prepareToClose() ?? true else { return false }
+        return forwardedDelegate?.windowShouldClose?(sender) ?? true
+    }
+
+    nonisolated override func responds(to aSelector: Selector!) -> Bool {
+        super.responds(to: aSelector) || forwardedDelegate?.responds(to: aSelector) == true
+    }
+
+    nonisolated override func forwardingTarget(for aSelector: Selector!) -> Any? {
+        forwardedDelegate?.responds(to: aSelector) == true ? forwardedDelegate : super.forwardingTarget(for: aSelector)
+    }
 }
 
 /// Routes an `NSMenuItem`'s action back to a Swift closure, carrying the
