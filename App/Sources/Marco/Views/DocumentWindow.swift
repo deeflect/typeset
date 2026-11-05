@@ -208,10 +208,17 @@ struct DocumentWindow: View {
         if controller.isEditing {
             return controller.conflictState == .clean ? "Editing \u{b7} \u{2318}E to preview" : "Edited \u{b7} \u{2318}E to preview"
         }
-        if freshUpdate { return "Updated just now" }
-        let folder = url.deletingLastPathComponent()
-        let parent = folder.deletingLastPathComponent().lastPathComponent
-        return parent.isEmpty || parent == "/" ? folder.lastPathComponent : "\(folder.lastPathComponent) \u{2014} \(parent)"
+        let status: String
+        if freshUpdate {
+            status = "Updated just now"
+        } else if let changes = model.changesSummary {
+            status = changes
+        } else {
+            let folder = url.deletingLastPathComponent()
+            let parent = folder.deletingLastPathComponent().lastPathComponent
+            status = parent.isEmpty || parent == "/" ? folder.lastPathComponent : "\(folder.lastPathComponent) \u{2014} \(parent)"
+        }
+        return [status, model.taskSummary].compactMap { $0 }.joined(separator: " \u{b7} ")
     }
 
     // MARK: - Toolbar

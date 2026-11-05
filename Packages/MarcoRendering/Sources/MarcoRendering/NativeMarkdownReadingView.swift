@@ -126,6 +126,22 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
             coordinator?.pulse(blockIDs: pendingPulseIDs)
             pendingPulseIDs.removeAll()
         }
+        /// Persistent quiet gutter bars ("changed since last viewed"), kept
+        /// across reloads for blocks whose id survives. Empty set clears.
+        public private(set) var changedBlockIDs: Set<String> = []
+        public func markChanged(blockIDs: Set<String>) {
+            changedBlockIDs = blockIDs
+            coordinator?.updateMarkers()
+        }
+        /// The reader's selection as plain text (task boxes/images spelled
+        /// out, like Copy) plus the ids of the blocks it touches, in order.
+        public func selection() -> (text: String, blockIDs: [String])? {
+            guard let view, let document = coordinator?.document else { return nil }
+            let selected = view.selectedRange()
+            guard selected.length > 0 else { return nil }
+            let ids = document.blockRanges.filter { NSIntersectionRange($0.range, selected).length > 0 }.map(\.id)
+            return (view.plainText(in: selected), ids)
+        }
     }
 
     @MainActor public final class Coordinator: NSObject, NSTextViewDelegate {
@@ -199,6 +215,7 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
             pulseToken += 1
             view.ticks = []
             document = input.document
+            updateMarkers()
             if let old {
                 let splice = input.document.replacementRanges(from: old)
                 view.textStorage?.replaceCharacters(in: splice.old, with: input.document.attributedString.attributedSubstring(from: splice.new))
@@ -304,6 +321,13 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.fadeTicks(token, step: 1) }
         }
 
+        fileprivate func updateMarkers() {
+            guard let view else { return }
+            let ids = controller?.changedBlockIDs ?? []
+            view.markers = ids.isEmpty ? [] : (document?.blockRanges ?? []).filter { ids.contains($0.id) }.map(\.range)
+            view.needsDisplay = true
+        }
+
         private func fadeTicks(_ token: Int, step: Int) {
             guard token == pulseToken, let view else { return }
             let steps = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 1 : 10
@@ -406,6 +430,8 @@ private final class ReadingTextView: NSTextView {
     weak var coordinator: NativeMarkdownReadingView.Coordinator?
     /// Change ticks (character range, opacity), drawn in the left gutter.
     var ticks: [(range: NSRange, alpha: CGFloat)] = []
+    /// Changed-since-last-viewed bars: same spot as ticks, quieter, persistent.
+    var markers: [NSRange] = []
     private var contextCodeIndex: Int?
     private var contextTaskIndex: Int?
     private weak var hoveredCopyBlock: MarcoTextBlock?
@@ -418,9 +444,10 @@ private final class ReadingTextView: NSTextView {
     }
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        guard !ticks.isEmpty, let layout = layoutManager, let container = textContainer, let length = textStorage?.length else { return }
+        guard !ticks.isEmpty || !markers.isEmpty, let layout = layoutManager, let container = textContainer, let length = textStorage?.length else { return }
         let origin = textContainerOrigin
-        for tick in ticks where NSMaxRange(tick.range) <= length {
+        let bars = markers.map { (range: $0, alpha: CGFloat(0.4)) } + ticks
+        for tick in bars where NSMaxRange(tick.range) <= length {
             let content = NSRange(location: tick.range.location, length: max(0, tick.range.length - 1))
             let glyphs = layout.glyphRange(forCharacterRange: content, actualCharacterRange: nil)
             let bounds = layout.boundingRect(forGlyphRange: glyphs, in: container)
@@ -540,7 +567,20 @@ private final class ReadingTextView: NSTextView {
         let selected = selectedRange()
         guard selected.length > 0, let textStorage else { return }
         let rich = textStorage.attributedSubstring(from: selected)
-        let plain = NSMutableString(string: rich.string)
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(plainText(in: selected), forType: .string)
+        if let data = try? rich.data(from: NSRange(location: 0, length: rich.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]) {
+            pasteboard.setData(data, forType: .rtf)
+        }
+        if rich.string.contains("\u{FFFC}"),
+           let data = try? rich.data(from: NSRange(location: 0, length: rich.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.rtfd]) {
+            pasteboard.setData(data, forType: .rtfd)
+        }
+    }
+    /// Selected text with drawn stand-ins spelled out, shared by Copy and Copy as Quote.
+    func plainText(in selected: NSRange) -> String {
+        let plain = NSMutableString(string: (string as NSString).substring(with: selected))
         // Drawn stand-ins (task boxes, images) are U+FFFC in the text; give plain text words for them.
         var replacements: [(NSRange, String)] = []
         for image in coordinator?.document?.images ?? [] where NSLocationInRange(image.range.location, selected) {
@@ -552,15 +592,6 @@ private final class ReadingTextView: NSTextView {
         for (range, text) in replacements.sorted(by: { $0.0.location > $1.0.location }) {
             plain.replaceCharacters(in: NSRange(location: range.location - selected.location, length: range.length), with: text)
         }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(plain as String, forType: .string)
-        if let data = try? rich.data(from: NSRange(location: 0, length: rich.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]) {
-            pasteboard.setData(data, forType: .rtf)
-        }
-        if rich.string.contains("\u{FFFC}"),
-           let data = try? rich.data(from: NSRange(location: 0, length: rich.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.rtfd]) {
-            pasteboard.setData(data, forType: .rtfd)
-        }
+        return plain as String
     }
 }

@@ -43,6 +43,8 @@ struct MarcoCommands: Commands {
         CommandGroup(replacing: .newItem) {
             Button("Open…") { openPanel() }
                 .keyboardShortcut("o", modifiers: .command)
+            Button("New from Clipboard") { DocumentOpener.shared.openClipboard() }
+                .keyboardShortcut("n", modifiers: .command)
         }
         CommandGroup(replacing: .saveItem) {
             // Replacing this group also removed the standard Close item, which
@@ -56,6 +58,8 @@ struct MarcoCommands: Commands {
             Divider()
             Button("Export as PDF…") { activeModel?.exportPDF() }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
+                .disabled(!hasDocument)
+            Button("Export as Word…") { activeModel?.exportWord() }
                 .disabled(!hasDocument)
             Button("Print…") { activeModel?.printDocument() }
                 .keyboardShortcut("p", modifiers: .command)
@@ -82,6 +86,9 @@ struct MarcoCommands: Commands {
             Divider()
             Button("Copy as Rich Text") { activeModel?.copyAsRichText() }
                 .keyboardShortcut("c", modifiers: [.command, .shift])
+                .disabled(!hasDocument)
+            Button("Copy as Quote for Agent") { activeModel?.copyQuoteForAgent() }
+                .keyboardShortcut("c", modifiers: [.command, .shift, .option])
                 .disabled(!hasDocument)
             Divider()
             Button("Find…") { activeModel?.openFind() }
@@ -129,6 +136,15 @@ struct MarcoCommands: Commands {
             }
             .keyboardShortcut("f", modifiers: [.command, .option])
             .disabled(!hasDocument)
+
+            Divider()
+
+            Button("Next Change") { activeModel?.goToNextChange() }
+                .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                .disabled(!(activeModel?.canGoToNextChange ?? false))
+            Button("Previous Change") { activeModel?.goToPreviousChange() }
+                .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                .disabled(!(activeModel?.canGoToPreviousChange ?? false))
         }
 
         CommandGroup(replacing: .help) {
