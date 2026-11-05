@@ -88,6 +88,7 @@ struct DocumentWindow: View {
         }
         .background { WindowAccessor { model.window = $0 } }
         .focusedValue(\.windowModel, model)
+        .sheet(isPresented: $model.showsQuickOpen) { QuickOpenView(model: model) }
         .onAppear { DocumentOpener.shared.register(model) }
         .task(id: url) {
             model.setReadingTheme(theme)

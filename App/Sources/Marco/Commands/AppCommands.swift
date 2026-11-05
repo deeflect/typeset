@@ -43,6 +43,8 @@ struct MarcoCommands: Commands {
         CommandGroup(replacing: .newItem) {
             Button("Open…") { openPanel() }
                 .keyboardShortcut("o", modifiers: .command)
+            Button("Open Folder…") { DocumentOpener.shared.openFolderPanel() }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
         }
         CommandGroup(replacing: .saveItem) {
             // Replacing this group also removed the standard Close item, which
@@ -145,6 +147,11 @@ struct MarcoCommands: Commands {
             Button("Forward") { activeModel?.goForward() }
                 .keyboardShortcut("]", modifiers: .command)
                 .disabled(!(activeModel?.canGoForward ?? false))
+            Divider()
+            // ⌘K, not ⌘P: ⌘P stays Print (macOS convention).
+            Button("Open Quickly…") { activeModel?.showsQuickOpen = true }
+                .keyboardShortcut("k", modifiers: .command)
+                .disabled(activeModel?.quickOpenRoot == nil)
         }
 
     }

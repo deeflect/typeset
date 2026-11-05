@@ -93,7 +93,7 @@ struct EmptyStateView: View {
     }
 
     private func open(dropped urls: [URL]) -> Bool {
-        guard let url = urls.first(where: { markdownExtensions.contains($0.pathExtension.lowercased()) }) else {
+        guard let url = urls.first(where: { markdownExtensions.contains($0.pathExtension.lowercased()) || $0.isDirectory }) else {
             return false
         }
         DocumentOpener.shared.open(url)

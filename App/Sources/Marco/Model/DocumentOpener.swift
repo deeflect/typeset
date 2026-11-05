@@ -82,7 +82,9 @@ final class DocumentOpener {
     // MARK: - Opening
 
     func open(_ urls: [URL]) {
-        let wanted = urls.map(\.standardizedFileURL)
+        // A folder (Open panel, drop) opens in folder mode.
+        for folder in urls where folder.isDirectory { openFolder(folder) }
+        let wanted = urls.filter { !$0.isDirectory }.map(\.standardizedFileURL)
         guard !wanted.isEmpty else { return }
         pending.append(contentsOf: wanted)
         scheduleDrain()

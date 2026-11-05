@@ -76,7 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             UTType(filenameExtension: $0)
         }
         panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
+        panel.canChooseDirectories = true
         guard panel.runModal() == .OK else { return }
         DocumentOpener.shared.open(panel.urls)
     }
