@@ -61,7 +61,7 @@ struct MarcoCommands: Commands {
             Button("Export as PDF…") { activeModel?.exportPDF() }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
                 .disabled(!hasDocument)
-            Button("Export as Word…") { activeModel?.exportWord() }
+            Button("Export as Rich Text…") { activeModel?.exportRichText() }
                 .disabled(!hasDocument)
             Button("Print…") { activeModel?.printDocument() }
                 .keyboardShortcut("p", modifiers: .command)

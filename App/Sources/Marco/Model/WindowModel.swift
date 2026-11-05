@@ -488,10 +488,10 @@ final class WindowModel {
         PDFExporter.exportPDF(source: controller.currentText, url: controller.url, suggestedName: name)
     }
 
-    func exportWord() {
+    func exportRichText() {
         guard let controller else { return }
-        let name = (currentURL?.deletingPathExtension().lastPathComponent ?? "Document") + ".docx"
-        PDFExporter.exportWord(source: controller.currentText, url: controller.url, suggestedName: name)
+        let name = (currentURL?.deletingPathExtension().lastPathComponent ?? "Document") + ".rtf"
+        PDFExporter.exportRichText(source: controller.currentText, url: controller.url, suggestedName: name)
     }
 
     // MARK: - Changes since last viewed

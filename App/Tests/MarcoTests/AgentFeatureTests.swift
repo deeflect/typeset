@@ -36,11 +36,9 @@ final class AgentFeatureTests: XCTestCase {
         XCTAssertEqual(store.blockIDs(for: urls[2]), ["id2"])
     }
 
-    /// AppKit's Office Open XML writer keeps text, headings and code, but
-    /// flattens tables to one paragraph per cell and drops images (checked
-    /// by unzipping this fixture: no <w:tbl>, no media).
-    func testWordExportWritesDocx() async throws {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("marco-docx-\(UUID().uuidString)")
+    /// RTF keeps the native table (AppKit's .docx writer flattened it). Images are dropped.
+    func testRichTextExportKeepsTables() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("marco-rtf-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
         let image = NSImage(size: NSSize(width: 8, height: 8), flipped: false) { rect in
@@ -52,7 +50,9 @@ final class AgentFeatureTests: XCTestCase {
         let source = "# Title\n\n| A | B |\n|---|---|\n| one | two |\n\n![dot](dot.png)\n\n```swift\nlet x = 1\n```\n"
         try Data(source.utf8).write(to: doc)
         let attributed = await PDFExporter.preparedDocument(source: source, url: doc)
-        let data = try PDFExporter.wordData(attributed)
-        XCTAssertEqual(data.prefix(2), Data("PK".utf8))
+        let rtf = String(decoding: try PDFExporter.richTextData(attributed), as: UTF8.self)
+        XCTAssertTrue(rtf.hasPrefix("{\\rtf"))
+        XCTAssertTrue(rtf.contains("\\trowd"), "table survives as an RTF table")
+        XCTAssertTrue(rtf.contains("two"))
     }
 }

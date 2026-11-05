@@ -17,25 +17,26 @@ enum PDFExporter {
         }
     }
 
-    /// Same document as PDF/rich copy, written by AppKit's Office Open XML writer.
-    static func exportWord(source: String, url: URL?, suggestedName: String) {
+    /// Same document as PDF/rich copy, as RTF (Word, Pages and Google Docs open it).
+    /// ponytail: RTF keeps tables but drops images; AppKit's .docx writer drops both. Custom OOXML writer if images matter.
+    static func exportRichText(source: String, url: URL?, suggestedName: String) {
         Task {
             let attributed = await preparedDocument(source: source, url: url)
             let panel = NSSavePanel()
-            panel.allowedContentTypes = [UTType(filenameExtension: "docx")].compactMap { $0 }
+            panel.allowedContentTypes = [.rtf]
             panel.nameFieldStringValue = suggestedName
             guard panel.runModal() == .OK, let destination = panel.url else { return }
             do {
-                try wordData(attributed).write(to: destination, options: .atomic)
+                try richTextData(attributed).write(to: destination, options: .atomic)
             } catch {
                 NSAlert(error: error).runModal()
             }
         }
     }
 
-    static func wordData(_ attributed: NSAttributedString) throws -> Data {
+    static func richTextData(_ attributed: NSAttributedString) throws -> Data {
         try attributed.data(from: NSRange(location: 0, length: attributed.length),
-                            documentAttributes: [.documentType: NSAttributedString.DocumentType.officeOpenXML])
+                            documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
     }
 
     static func print(source: String, url: URL?) {
