@@ -122,7 +122,7 @@ public final class FolderAccessStore {
     /// folder directly, without an interactive panel. Skips the store if
     /// the folder (or an ancestor of it) is already granted.
     @discardableResult
-    func grant(folder folderURL: URL) -> Bool {
+    public func grant(folder folderURL: URL) -> Bool {
         let std = folderURL.standardizedFileURL
         guard FolderAccessPathing.coveringFolder(for: std.path, among: active.map(\.path)) == nil else {
             return true

@@ -39,6 +39,10 @@ final class WindowModel {
     private var suppressOutlineTrackingUntil: Date = .distantPast
     /// Whether the outline sidebar is showing (^⌘S, toolbar toggle).
     var showsOutline = false
+    /// Folder mode: the opened folder this window lists (sidebar Files,
+    /// Open Quickly). See `FolderIndex`.
+    var folder: FolderIndex?
+    var showsQuickOpen = false
     /// Close on the moved/deleted banner; reset per document.
     var removedBannerDismissed = false
 
@@ -190,6 +194,7 @@ final class WindowModel {
         applyWindowIdentity()
         // Remember this document for the empty-state home screen (PLAN §6).
         RecentDocumentsStore.shared.record(url)
+        attachFolderIfNeeded(for: url)
     }
 
     func setReadingTheme(_ theme: Theme) {
