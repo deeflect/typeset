@@ -38,7 +38,7 @@ mkdir -p "$OUT_DIR"
 echo "==> Generating Xcode project"
 xcodegen generate >/dev/null
 
-echo "==> Building Marco (Debug)"
+echo "==> Building Typeset (Debug)"
 xcodebuild \
   -project Marco.xcodeproj \
   -scheme Marco \
@@ -47,7 +47,7 @@ xcodebuild \
   -destination 'platform=macOS' \
   build >/dev/null
 
-BUILT_APP="$DERIVED_DATA/Build/Products/Debug/Marco.app"
+BUILT_APP="$DERIVED_DATA/Build/Products/Debug/Typeset.app"
 [ -d "$BUILT_APP" ] || { echo "error: build didn't produce $BUILT_APP" >&2; exit 1; }
 
 echo "==> Re-signing a throwaway copy without the sandbox entitlement"
@@ -79,6 +79,6 @@ MARCO_SNAPSHOT_OUT="$ABS_OUT_DIR" \
 MARCO_SNAPSHOT_VARIANT="$VARIANT" \
 MARCO_SNAPSHOT_WIDTH="$WIDTH" \
 MARCO_SNAPSHOT_SCALE="$SCALE" \
-  "$UNSANDBOXED_APP/Contents/MacOS/Marco"
+  "$UNSANDBOXED_APP/Contents/MacOS/Typeset"
 
 echo "==> Wrote PNGs to $ABS_OUT_DIR"

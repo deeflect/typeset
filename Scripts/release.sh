@@ -31,7 +31,7 @@ done
 TEAM_ID=${TEAM_ID:-}
 EXPORT_METHOD=${EXPORT_METHOD:-developer-id}
 OUT_DIR=${OUT_DIR:-.build-release}
-ARCHIVE_PATH="$OUT_DIR/Marco.xcarchive"
+ARCHIVE_PATH="$OUT_DIR/Typeset.xcarchive"
 EXPORT_PATH="$OUT_DIR/export"
 
 # --dry-run: print exactly what would run and exit — no project generation,
@@ -58,7 +58,7 @@ run xcodebuild -scheme Marco -configuration Release \
   -destination 'generic/platform=macOS' \
   archive
 
-APP_PATH="$ARCHIVE_PATH/Products/Applications/Marco.app"
+APP_PATH="$ARCHIVE_PATH/Products/Applications/Typeset.app"
 if [ "$DRY_RUN" != "1" ] && [ ! -d "$APP_PATH" ]; then
   # Name follows Config/App.xcconfig's APP_NAME; fall back to a glob if
   # the app has been renamed since this script was last touched.
@@ -101,7 +101,7 @@ EOF
   echo ""
   echo "Next steps for real distribution (see SHIPPING.md):"
   echo "  - notarize: xcrun notarytool submit <zip-of-export> --keychain-profile <profile> --wait"
-  echo "  - staple:   xcrun stapler staple \"$EXPORT_PATH/Marco.app\""
+  echo "  - staple:   xcrun stapler staple \"$EXPORT_PATH/Typeset.app\""
   if [ "$EXPORT_METHOD" = "app-store" ]; then
     echo "  - upload:   xcrun altool --upload-app -f <pkg> -t macos --apiKey <key> --apiIssuer <issuer>"
     echo "              (or: xcrun notarytool / Transporter.app, then submit for review in App Store Connect)"

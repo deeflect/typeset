@@ -26,3 +26,8 @@ Tests/Fixtures/generated/
 # Claude Code local project state
 .claude/
 .impeccable/
+
+# Website
+site/node_modules
+site/dist
+site/.astro
