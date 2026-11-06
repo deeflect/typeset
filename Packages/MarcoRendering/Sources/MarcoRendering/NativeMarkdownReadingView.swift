@@ -218,9 +218,10 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
             updateMarkers()
             if let old {
                 let splice = input.document.replacementRanges(from: old)
-                view.textStorage?.replaceCharacters(in: splice.old, with: input.document.attributedString.attributedSubstring(from: splice.new))
+                view.textStorage?.replaceCharacters(in: splice.old,
+                    with: input.document.materializedAttributedString(in: splice.new))
             } else {
-                view.textStorage?.setAttributedString(input.document.attributedString)
+                view.textStorage?.setAttributedString(input.document.materializedAttributedString())
             }
             if let old, let remapped = input.document.remappedSelection(selection, from: old) {
                 view.setSelectedRange(remapped)

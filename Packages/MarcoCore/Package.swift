@@ -10,7 +10,8 @@ let package = Package(
         .library(name: "MarcoCore", targets: ["MarcoCore"])
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-markdown.git", from: "0.6.0")
+        .package(url: "https://github.com/apple/swift-markdown.git", exact: "0.8.0"),
+        .package(url: "https://github.com/swiftlang/swift-cmark.git", exact: "0.8.0")
     ],
     targets: [
         .target(

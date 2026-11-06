@@ -30,6 +30,17 @@
 				<string>CA92.1</string>
 			</array>
 		</dict>
+		<dict>
+			<!-- Recent files and folder mode inspect user-selected file metadata;
+			     temporary clipboard files are inside the app container. -->
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>3B52.1</string>
+				<string>C617.1</string>
+			</array>
+		</dict>
 	</array>
 </dict>
 </plist>

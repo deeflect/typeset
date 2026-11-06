@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import MarcoCore
 import PDFKit
 import SwiftUI
@@ -7,6 +8,15 @@ import XCTest
 
 @MainActor
 final class DocumentLifecycleTests: XCTestCase {
+    func testHelpResourcesAreBundled() throws {
+        for name in ["Welcome", "Privacy", "ThirdPartyNotices"] {
+            XCTAssertNotNil(Bundle.main.url(forResource: name, withExtension: "md"), "missing \(name).md")
+        }
+        let notices = try String(contentsOf: XCTUnwrap(Bundle.main.url(forResource: "ThirdPartyNotices", withExtension: "md")), encoding: .utf8)
+        XCTAssertTrue(notices.contains("Swift cmark 0.8.0 — COPYING"))
+        XCTAssertTrue(notices.contains("Highlightr 2.3.0 — LICENSE"))
+    }
+
     private func file(_ text: String = "# Original\n") throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("marco-lifecycle-\(UUID().uuidString).md")
         try Data(text.utf8).write(to: url)
@@ -75,6 +85,100 @@ final class DocumentLifecycleTests: XCTestCase {
         try Data("- [ ] Task\nExternal\n".utf8).write(to: url, options: .atomic)
         controller.toggleCheckbox(blockStartLine: 0, itemLineOffset: 0, checked: true)
         XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "- [ ] Task\nExternal\n")
+        controller.stop()
+    }
+
+    func testUTF8BOMSurvivesSaveAndCheckbox() async throws {
+        let bom = Data([0xEF, 0xBB, 0xBF])
+        let url = try file()
+        try (bom + Data("- [ ] Task\n".utf8)).write(to: url)
+        let controller = await loaded(url)
+        XCTAssertEqual(controller.currentText, "- [ ] Task\n")
+        controller.toggleCheckbox(blockStartLine: 0, itemLineOffset: 0, checked: true)
+        XCTAssertEqual(try Data(contentsOf: url), bom + Data("- [x] Task\n".utf8))
+        _ = controller.enterEditMode()
+        controller.noteEditedTextChanged("- [x] Task\nMore\n")
+        XCTAssertTrue(controller.save())
+        XCTAssertEqual(try Data(contentsOf: url), bom + Data("- [x] Task\nMore\n".utf8))
+        controller.stop()
+    }
+
+    func testCanonicallyEquivalentExternalBytesConflict() async throws {
+        let url = try file("# Caf\u{00E9}\n")
+        let controller = await loaded(url)
+        _ = controller.enterEditMode()
+        controller.noteEditedTextChanged("# Local\n")
+        try Data("# Cafe\u{0301}\n".utf8).write(to: url, options: .atomic)
+        XCTAssertFalse(controller.save())
+        XCTAssertEqual(controller.conflictState, .conflictPending)
+        XCTAssertEqual(try Data(contentsOf: url), Data("# Cafe\u{0301}\n".utf8))
+        controller.stop()
+    }
+
+    func testNormalizationOnlyReloadThenCheckboxKeepsExternalBytes() async throws {
+        let url = try file("- [ ] Caf\u{00E9}\n")
+        let controller = await loaded(url)
+        let reloaded = expectation(description: "normalization change reloaded")
+        controller.onReloadApplied = { _ in reloaded.fulfill() }
+        try Data("- [ ] Cafe\u{0301}\n".utf8).write(to: url, options: .atomic)
+        await fulfillment(of: [reloaded], timeout: 3)
+        controller.toggleCheckbox(blockStartLine: 0, itemLineOffset: 0, checked: true)
+        XCTAssertEqual(try Data(contentsOf: url), Data("- [x] Cafe\u{0301}\n".utf8))
+        controller.onReloadApplied = nil
+        controller.stop()
+    }
+
+    func testNormalizationOnlyEditIsDirtyAndSavesBytes() async throws {
+        let url = try file("# Caf\u{00E9}\n")
+        let controller = await loaded(url)
+        _ = controller.enterEditMode()
+        controller.noteEditedTextChanged("# Cafe\u{0301}\n")
+        XCTAssertEqual(controller.conflictState, .dirty)
+        XCTAssertTrue(controller.save())
+        XCTAssertEqual(try Data(contentsOf: url), Data("# Cafe\u{0301}\n".utf8))
+        controller.stop()
+    }
+
+    func testSymlinkSavePreservesLinkTargetPermissionsAndXattr() async throws {
+        let target = try file()
+        let link = target.deletingLastPathComponent().appendingPathComponent("marco-link-\(UUID().uuidString).md")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+        defer { try? FileManager.default.removeItem(at: link) }
+        try FileManager.default.setAttributes([.posixPermissions: 0o640], ofItemAtPath: target.path)
+        let value = Array("keep".utf8)
+        XCTAssertEqual(target.path.withCString { path in
+            value.withUnsafeBytes { setxattr(path, "com.dee.marco.test", $0.baseAddress, value.count, 0, 0) }
+        }, 0)
+        let controller = await loaded(link)
+        _ = controller.enterEditMode()
+        controller.noteEditedTextChanged("# Saved\n")
+        XCTAssertTrue(controller.save())
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: link.path), target.path)
+        XCTAssertEqual(try String(contentsOf: target, encoding: .utf8), "# Saved\n")
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: target.path)[.posixPermissions] as? Int, 0o640)
+        var readback = [UInt8](repeating: 0, count: 16)
+        let capacity = readback.count
+        let count = target.path.withCString { path in
+            readback.withUnsafeMutableBytes { getxattr(path, "com.dee.marco.test", $0.baseAddress, capacity, 0, 0) }
+        }
+        XCTAssertEqual(Array(readback.prefix(max(count, 0))), value)
+        controller.stop()
+    }
+
+    func testRetargetedSymlinkCannotOverwriteNewTarget() async throws {
+        let original = try file()
+        let other = try file("# Other\n")
+        let link = original.deletingLastPathComponent().appendingPathComponent("marco-link-\(UUID().uuidString).md")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: original)
+        defer { try? FileManager.default.removeItem(at: link) }
+        let controller = await loaded(link)
+        _ = controller.enterEditMode()
+        controller.noteEditedTextChanged("# Local\n")
+        try FileManager.default.removeItem(at: link)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: other)
+        XCTAssertFalse(controller.save())
+        XCTAssertEqual(controller.conflictState, .conflictPending)
+        XCTAssertEqual(try String(contentsOf: other, encoding: .utf8), "# Other\n")
         controller.stop()
     }
 
@@ -153,6 +257,29 @@ final class DocumentLifecycleTests: XCTestCase {
         XCTAssertEqual(model.currentURL, destination.standardizedFileURL)
         XCTAssertEqual(try String(contentsOf: destination, encoding: .utf8), "# Saved copy\n")
         XCTAssertTrue(model.prepareToClose())
+        model.stop()
+    }
+
+    func testSaveAsPreservesBOMAndRejectsAliasOfOriginal() async throws {
+        let bom = Data([0xEF, 0xBB, 0xBF])
+        let original = try file()
+        try (bom + Data("# Original\n".utf8)).write(to: original)
+        let alias = original.deletingLastPathComponent().appendingPathComponent("marco-alias-\(UUID().uuidString).md")
+        let destination = original.deletingLastPathComponent().appendingPathComponent("marco-copy-\(UUID().uuidString).md")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: original)
+        defer {
+            try? FileManager.default.removeItem(at: alias)
+            try? FileManager.default.removeItem(at: destination)
+        }
+        let model = WindowModel()
+        model.load(initial: original)
+        while model.controller?.isLoading == true { try? await Task.sleep(for: .milliseconds(10)) }
+        _ = model.controller?.enterEditMode()
+        model.controller?.noteEditedTextChanged("# Copy\n")
+        XCTAssertFalse(model.saveAs(to: alias))
+        XCTAssertEqual(try Data(contentsOf: original), bom + Data("# Original\n".utf8))
+        XCTAssertTrue(model.saveAs(to: destination))
+        XCTAssertEqual(try Data(contentsOf: destination), bom + Data("# Copy\n".utf8))
         model.stop()
     }
 

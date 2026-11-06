@@ -48,7 +48,7 @@ enum NativeMarkdownImages {
         return Decoded(image: result, png: png)
     }
 
-    static func attachment(for decoded: Decoded, maxWidth: CGFloat = 600) -> NSTextAttachment {
+    @MainActor static func attachment(for decoded: Decoded, maxWidth: CGFloat = 600) -> NSTextAttachment {
         guard let image = decoded.image else { return NSTextAttachment() }
         let display = image.copy() as! NSImage
         if display.size.width > maxWidth {
@@ -67,8 +67,8 @@ enum NativeMarkdownImages {
 
 public extension NativeMarkdownDocument {
     /// Load local images for PDF/RTF export without changing character offsets.
-    func withLoadedLocalImages() async -> NSAttributedString {
-        let result = NSMutableAttributedString(attributedString: attributedString)
+    @MainActor func withLoadedLocalImages() async -> NSAttributedString {
+        let result = NSMutableAttributedString(attributedString: materializedAttributedString())
         for image in images {
             guard let url = image.url, url.isFileURL else { continue }
             let decoded = await NativeMarkdownImages.load(url)

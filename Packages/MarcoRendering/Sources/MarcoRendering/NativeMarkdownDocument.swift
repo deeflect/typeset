@@ -43,6 +43,28 @@ public struct NativeMarkdownDocument: @unchecked Sendable {
     let scale: CGFloat
     let documentURL: URL?
 
+    @MainActor public func materializedAttributedString(in range: NSRange? = nil) -> NSAttributedString {
+        let range = range ?? NSRange(location: 0, length: attributedString.length)
+        let result = NSMutableAttributedString(attributedString: attributedString.attributedSubstring(from: range))
+        let theme = Theme(colorScheme: isDark ? .dark : .light, scale: scale)
+        for checkbox in checkboxes where NSLocationInRange(checkbox.range.location, range) {
+            let attachment = NSTextAttachment()
+            attachment.attachmentCell = CheckboxCell(
+                checked: checkbox.checked, side: theme.scaled(16), stroke: NSColor(theme.checkboxStroke))
+            result.addAttribute(.attachment, value: attachment,
+                                range: NSRange(location: checkbox.range.location - range.location, length: 1))
+        }
+        for image in images where NSLocationInRange(image.range.location, range) {
+            let attachment = NSTextAttachment()
+            attachment.attachmentCell = ImagePlaceholderCell(
+                name: image.url?.lastPathComponent ?? (image.alt.isEmpty ? "Image" : image.alt),
+                fill: NSColor(theme.codeCardFill), stroke: NSColor(theme.hairline), scale: scale)
+            result.addAttribute(.attachment, value: attachment,
+                                range: NSRange(location: image.range.location - range.location, length: image.range.length))
+        }
+        return result
+    }
+
     /// Parse once as a complete document so reference definitions resolve in every block.
     public static func build(source: String, blocks: [Block], theme: Theme, documentURL: URL?, metadataExpanded: Bool = true) -> Self {
         make(source: source, blocks: blocks, theme: theme, documentURL: documentURL, metadataExpanded: metadataExpanded, cancellable: false)!
@@ -77,7 +99,7 @@ public struct NativeMarkdownDocument: @unchecked Sendable {
                 writer.record(block: block, sourceLine: -1, start: start)
             }
         }
-        let document = Document(parsing: body)
+        let document = Document(parsing: MarkdownParser.bodyForParsing(body))
         if cancellable && Task<Never, Never>.isCancelled { return nil }
         let byLine = Dictionary(uniqueKeysWithValues: blocks.filter { $0.startLine >= 0 }.map { ($0.startLine, $0) })
         writer.numberFootnotes(in: document)
@@ -86,11 +108,15 @@ public struct NativeMarkdownDocument: @unchecked Sendable {
             let startLine = (child.range?.lowerBound.line ?? 1) - 1
             let block = byLine[startLine]
             let start = writer.output.length
+            let imageStart = writer.images.count
+            let checkboxStart = writer.checkboxes.count
+            let codeStart = writer.codeRanges.count
             writer.currentBlockID = block?.id
             writer.openTags = []
             writer.renderBlock(child, blockStartLine: startLine, depth: 0)
             if let block {
-                writer.record(block: block, sourceLine: startLine, start: start)
+                writer.record(block: block, sourceLine: startLine, start: start,
+                              imageStart: imageStart, checkboxStart: checkboxStart, codeStart: codeStart)
             }
         }
         if cancellable && Task<Never, Never>.isCancelled { return nil }
@@ -157,15 +183,16 @@ private struct Writer {
     /// List and nested-block indent step: 16 pt box + 10 pt gap.
     let indentStep: CGFloat = 26
 
-    mutating func record(block: Block, sourceLine: Int, start: Int) {
+    mutating func record(block: Block, sourceLine: Int, start: Int,
+                         imageStart: Int = 0, checkboxStart: Int = 0, codeStart: Int = 0) {
         let range = NSRange(location: start, length: output.length - start)
         var links: [String] = []
         output.enumerateAttribute(.link, in: range) { value, part, _ in
             if let url = value as? URL { links.append("\(part.location - start):\(part.length):\(url.absoluteString)") }
         }
-        let imageValues = images.filter { NSLocationInRange($0.range.location, range) }.map { "\($0.range.location - start):\($0.alt):\($0.url?.absoluteString ?? "")" }
-        let marks = checkboxes.filter { NSLocationInRange($0.range.location, range) }.map { $0.checked ? "x" : "o" }
-            + codeRanges.filter { NSLocationInRange($0.range.location, range) }.map { "code:\($0.language ?? "")" }
+        let imageValues = images[imageStart...].map { "\($0.range.location - start):\($0.alt):\($0.url?.absoluteString ?? "")" }
+        let marks = checkboxes[checkboxStart...].map { $0.checked ? "x" : "o" }
+            + codeRanges[codeStart...].map { "code:\($0.language ?? "")" }
         ranges.append(.init(id: block.id, sourceLine: sourceLine, range: range, renderedText: output.attributedSubstring(from: range).string, links: links, images: imageValues, marks: marks))
     }
 
@@ -197,6 +224,11 @@ private struct Writer {
             output.addAttribute(.paragraphStyle, value: marker, range: range)
         } else {
             output.addAttribute(.paragraphStyle, value: style, range: range)
+        }
+        var lineStart = start
+        for index in start..<(output.length - 1) where output.mutableString.character(at: index) == 10 {
+            updateStyles(in: NSRange(location: lineStart, length: index - lineStart + 1)) { $0.paragraphSpacing = 0 }
+            lineStart = index + 1
         }
     }
 
@@ -263,7 +295,6 @@ private struct Writer {
                 let start = output.length
                 if let box = item.checkbox {
                     let attachment = NSTextAttachment()
-                    attachment.attachmentCell = CheckboxCell(checked: box == .checked, side: theme.scaled(16), stroke: NSColor(theme.checkboxStroke))
                     append("\u{FFFC}", font: bodyFont, paragraph: p, extras: [.attachment: attachment])
                     append("\t", font: bodyFont, paragraph: p)
                     if let line = item.range?.lowerBound.line {
@@ -417,9 +448,6 @@ private struct Writer {
         let url = resolvedURL(source)
         let start = output.length
         let attachment = NSTextAttachment()
-        attachment.attachmentCell = ImagePlaceholderCell(
-            name: url?.lastPathComponent ?? (alt.isEmpty ? "Image" : alt),
-            fill: NSColor(theme.codeCardFill), stroke: NSColor(theme.hairline), scale: theme.scale)
         var extras: [NSAttributedString.Key: Any] = [.attachment: attachment]
         if let link { extras[.link] = link }
         append("\u{FFFC}", font: font, color: secondary, extras: extras)
@@ -527,7 +555,12 @@ private struct Writer {
                 footnoteNumbers[definition.label] = number
                 if let currentBlockID { footnoteBlockIDs["fn-\(definition.label)"] = currentBlockID }
                 append("\(number).\t", font: font, color: .tertiaryLabelColor)
-                renderFootnoteText(definition.rest, font: font, color: secondary, link: nil)
+                if (definition.rest.hasPrefix("https://") || definition.rest.hasPrefix("http://")),
+                   !definition.rest.contains(where: \.isWhitespace), let url = URL(string: definition.rest) {
+                    append(definition.rest, font: font, color: NSColor(theme.linkColor), extras: [.link: url])
+                } else {
+                    renderFootnoteText(definition.rest, font: font, color: secondary, link: nil)
+                }
             } else if child is SoftBreak || child is LineBreak, Self.footnoteDefinition(in: children, at: index + 1) != nil {
                 continue
             } else if let text = (child as? Markdown.Text)?.string {

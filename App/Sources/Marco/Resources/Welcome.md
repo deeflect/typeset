@@ -1,127 +1,29 @@
 ---
-title: Welcome to Marco
-subtitle: Preview.app for Markdown
-version: 0.1.0
-tags: [markdown, macOS, reading]
+title: Welcome to Typeset
+subtitle: Read Markdown on your Mac
 ---
 
-# Welcome to Marco
+# Welcome to Typeset
 
-Marco opens a Markdown file the way Preview opens a PDF — **instantly**,
-beautifully rendered, and ready to read. No sidebar to configure, no
-account to make, no syntax to learn. Just your document, looking the way
-it was always meant to look.
+Open a Markdown file to read it in a native Mac window. Typeset renders headings, tables, task lists, links, images, and fenced code blocks. Files stay on your Mac.
 
-This page is written in Markdown. What you're reading *is* the format,
-rendered by the same engine that will render your files.
+## Open and navigate
 
-## Typography that earns its place
+- Double-click a `.md` file in Finder, drag one into Typeset, or press `⌘O`.
+- Press `⇧⌘O` to open a folder. The Files sidebar lists its Markdown files; `⌘K` opens one quickly.
+- Use the outline to jump between headings, or `⌘F` to find text.
+- Follow relative links to other Markdown files, then use Back and Forward in the Go menu.
 
-Marco uses a hand-tuned **SF Pro** ramp so headings breathe and body text
-sits at a comfortable reading measure — around seventy characters, the
-width books have used for centuries. Long lines are tiring; Marco keeps
-them honest.
+## Read as files change
 
-You get the full range of inline styling: **bold** for weight, *italic*
-for emphasis, ~~strikethrough~~ for second thoughts, `inline code` for the
-literal, and [links](https://daringfireball.net/projects/markdown/) in the
-system accent color. Relative links to other `.md` files open in place.
+Typeset reloads an open document when another app changes it. Changed blocks are highlighted briefly. Turn on Follow Mode with `⌥⌘F` to scroll to new changes.
 
-### Smaller headings converge toward the body
+## Edit when you need to
 
-#### So the hierarchy stays legible
+Press `⌘E` to edit the Markdown source, then `⌘S` to save or `⌘E` to return to reading. If the file changed elsewhere while you were editing, Typeset asks whether to keep your version or take the version on disk. You can also click task checkboxes in the reading view.
 
-##### Without shouting
+## Share and export
 
-###### Down to the quietest level
+Use the File menu to export as PDF or Rich Text, or print. Select text and use `⇧⌘C` to copy it as Rich Text. The Help menu has the privacy policy, support, and third-party notices.
 
-## Code, highlighted and copyable
-
-Fenced code blocks become cards — a subtle fill, a hairline border, and
-horizontal scrolling contained *inside* the card so wide lines never push
-your page around. Hover to reveal the language tag and a copy button that
-morphs into a checkmark when it's done.
-
-```swift
-struct Block: Identifiable {
-    let kind: BlockKind
-    let rawText: String
-    let contentHash: String
-
-    var id: String { "\(contentHash)#\(ordinal)" }
-}
-
-func render(_ blocks: [Block]) -> some View {
-    LazyVStack(alignment: .leading, spacing: 0) {
-        ForEach(blocks) { BlockView(block: $0) }
-    }
-}
-```
-
-Highlighting is computed off the main thread and cached, so scrolling a
-thousand code blocks stays smooth.
-
-```python
-def fibonacci(n: int) -> int:
-    a, b = 0, 1
-    for _ in range(n):
-        a, b = b, a + b
-    return a
-```
-
-## Tables, aligned and alive
-
-| Feature            | Status      | Ships in |
-| ------------------ | :---------: | -------: |
-| Block renderer     | Done        |     v1.0 |
-| Live reload        | In progress |     v1.0 |
-| Mermaid + KaTeX    | Planned     |     v1.1 |
-| Folder mode        | Planned     |     v1.1 |
-
-Header rows are emphasized, columns respect their alignment, and rows
-highlight as you move the pointer across them. Wider tables scroll sideways
-inside their own card instead of stretching the page.
-
-## Lists, nested properly
-
-- Reading-first, edit when you need to
-- Live reload while your agent rewrites the file
-  - Changed blocks pulse, once, softly
-  - Scroll position anchors to the nearest heading
-- Copy as rich text, export to PDF
-
-1. Double-click a `.md` file in Finder
-2. It opens, already rendered
-3. Press `⌘W` and it's gone — weightless
-
-### Task lists with real checkboxes
-
-- [x] Parse Markdown into a stable block model
-- [x] Build the custom block renderer
-- [ ] Wire live reload
-- [ ] Ship to the App Store
-
-## Blockquotes carry a voice
-
-> The moat is not features — it's that it looks and feels like Apple
-> shipped it. Every decision is subordinated to two bars: visual quality
-> and snappiness.
->
-> > Nested quotes deepen the accent bar, so a reply inside a reply stays
-> > visually distinct.
-
-## Everything else, handled
-
-Marco renders images with rounded corners and downsampled decode:
-
-![A soft gradient, decoded off-main and downsampled to the column width](marco-sample.png)
-
-It resolves frontmatter into the tidy chip at the top of this page, and
-draws a quiet centered rule when a document changes subject:
-
----
-
-That's the whole idea. Open a file and read it. When an agent rewrites it
-next to you, watch the changes arrive without a flicker.
-
-*Now open one of your own.*
+Quick Look in Finder can show the same rendered Markdown without opening a Typeset window.

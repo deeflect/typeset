@@ -4,6 +4,23 @@ import Testing
 
 struct MarkdownParserTests {
 
+    @Test func bareURLFootnotePreparationPreservesSourceAndCode() {
+        let source = "Ref[^a] [normal][link].\n\n```md\n[^code]: https://inside.example\n```\n\n    [^indent]: https://inside.example\n\n[^a]: https://example.com\n\n[link]: https://reference.example\n"
+        let prepared = MarkdownParser.bodyForParsing(source)
+        #expect(prepared.contains("[^code]: https://inside.example"))
+        #expect(prepared.contains("[^indent]: https://inside.example"))
+        #expect(prepared.contains("[link]: https://reference.example"))
+        #expect(prepared.contains("[^a]\\: https://example.com"))
+        let blocks = MarkdownParser.parse(source)
+        #expect(blocks.contains { $0.startLine == 8 && $0.rawText == "[^a]: https://example.com" })
+        #expect(blocks.contains { $0.kind == .codeBlock(language: "md") && $0.rawText.contains("[^code]: https://inside.example") })
+    }
+
+    @Test func multilineInlineCodeDoesNotBecomeFootnote() {
+        let source = "`before\n[^a]: https://example.com\nafter`\n"
+        #expect(MarkdownParser.bodyForParsing(source) == source)
+    }
+
     @Test func frontmatterIsSplitIntoItsOwnBlock() {
         let text = """
         ---

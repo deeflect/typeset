@@ -5,6 +5,31 @@ import XCTest
 @testable import MarcoRendering
 
 final class NativeMarkdownDocumentTests: XCTestCase {
+    func testRepeatedSmallFencesRecordOnlyTheirOwnRanges() {
+        let source = (0..<600).map { "```swift\nlet n = \($0)\n```\n" }.joined(separator: "\n")
+        let blocks = MarkdownParser.parse(source)
+        let started = CFAbsoluteTimeGetCurrent()
+        let rendered = NativeMarkdownDocument.build(source: source, blocks: blocks,
+            theme: Theme(colorScheme: .light, scale: 1), documentURL: nil)
+        print("NATIVE_FENCES_BENCH count=600 build_ms=\(Int((CFAbsoluteTimeGetCurrent() - started) * 1000))")
+        XCTAssertEqual(rendered.codeRanges.count, 600)
+        XCTAssertEqual(rendered.blockRanges.count, 600)
+        XCTAssertTrue(rendered.blockRanges.allSatisfy { $0.marks == ["code:swift"] })
+    }
+
+    @MainActor func testMaterializedSliceKeepsAttachmentOffsets() {
+        let source = "- [x] Task\n\n![alt](pic.png)\n"
+        let document = NativeMarkdownDocument.build(source: source, blocks: MarkdownParser.parse(source),
+            theme: Theme(colorScheme: .light, scale: 1), documentURL: nil)
+        let full = document.materializedAttributedString()
+        let imageRange = document.blockRanges.last!.range
+        let slice = document.materializedAttributedString(in: imageRange)
+        XCTAssertEqual(slice.string, full.attributedSubstring(from: imageRange).string)
+        let imageOffset = document.images[0].range.location - imageRange.location
+        XCTAssertTrue((slice.attribute(.attachment, at: imageOffset, effectiveRange: nil) as? NSTextAttachment)?.attachmentCell is ImagePlaceholderCell)
+        XCTAssertEqual(slice.string.components(separatedBy: "\u{FFFC}").count - 1, 1)
+    }
+
     func testFullDocumentReferencesTasksAndTables() {
         let source = """
         ---
@@ -114,7 +139,7 @@ extension NativeMarkdownDocumentTests {
         XCTAssertEqual(image.url?.path, "/tmp/docs/pic.png")
     }
 
-    func testLocalImageExportKeepsOffsets() async throws {
+    @MainActor func testLocalImageExportKeepsOffsets() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -696,6 +721,45 @@ extension NativeMarkdownDocumentTests {
         let definitionBlock = blocks.first { $0.startLine == 2 }?.id
         XCTAssertNotNil(definitionBlock)
         XCTAssertEqual(doc.footnoteBlockIDs, ["fn-a": definitionBlock!, "fn-b": definitionBlock!])
+    }
+
+    func testBareURLFootnoteDefinitionKeepsLinkAndNumber() {
+        let source = "Ref[^a].\n\n[^a]: https://example.com\n"
+        let document = render(source)
+        let plain = document.attributedString.string as NSString
+        XCTAssertEqual(plain.range(of: "Ref1.").location, 0)
+        XCTAssertNotEqual(plain.range(of: "1.\thttps://example.com").location, NSNotFound)
+        guard plain.range(of: "https://example.com").location != NSNotFound else { return }
+        let link = document.attributedString.attribute(.link,
+            at: plain.range(of: "https://example.com").location, effectiveRange: nil) as? URL
+        XCTAssertEqual(link?.host, "example.com")
+        XCTAssertEqual(document.footnoteBlockIDs.count, 1)
+    }
+
+    func testRelativeAndAngleURLFootnotesRemainVisible() {
+        let source = "Local[^a] remote[^b].\n\n[^a]: notes.md\n[^b]: <https://example.com>\n"
+        let document = render(source)
+        let plain = document.attributedString.string
+        XCTAssertTrue(plain.contains("1.\tnotes.md"), plain)
+        XCTAssertTrue(plain.contains("2.\thttps://example.com"), plain)
+        XCTAssertEqual(document.footnoteBlockIDs.count, 2)
+    }
+
+    func testMultilineInlineCodeKeepsFootnoteShapedLiteral() {
+        let source = "`before\n[^a]: https://example.com\nafter`\n"
+        let document = render(source)
+        XCTAssertTrue(document.attributedString.string.contains("[^a]: https://example.com"))
+        XCTAssertFalse(document.attributedString.string.contains("[^a]\\:"))
+    }
+
+    func testInlineBreakHasNoParagraphGap() {
+        let document = render("First<br>Second\n")
+        let text = document.attributedString
+        XCTAssertEqual(text.string, "First\nSecond\n")
+        let first = text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+        let second = text.attribute(.paragraphStyle, at: 6, effectiveRange: nil) as? NSParagraphStyle
+        XCTAssertEqual(first?.paragraphSpacing, 0)
+        XCTAssertGreaterThan(second?.paragraphSpacing ?? 0, 0)
     }
 
     func testReadmeHTMLRendersCommonTags() {

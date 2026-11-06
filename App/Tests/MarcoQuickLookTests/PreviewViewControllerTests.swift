@@ -3,6 +3,27 @@ import XCTest
 
 @MainActor
 final class PreviewViewControllerTests: XCTestCase {
+    func testFailedPrepareClearsPreviousPreview() async throws {
+        let first = FileManager.default.temporaryDirectory.appendingPathComponent("marco-ql-\(UUID().uuidString).md")
+        let invalid = FileManager.default.temporaryDirectory.appendingPathComponent("marco-ql-\(UUID().uuidString).md")
+        try Data("# First\n".utf8).write(to: first)
+        try Data([0xFF]).write(to: invalid)
+        defer { try? FileManager.default.removeItem(at: first); try? FileManager.default.removeItem(at: invalid) }
+        let preview = PreviewViewController()
+        _ = preview.view
+        let firstError = await withCheckedContinuation { continuation in
+            preview.preparePreviewOfFile(at: first) { continuation.resume(returning: $0) }
+        }
+        XCTAssertNil(firstError)
+        XCTAssertEqual(preview.view.subviews.count, 1)
+        let invalidError = await withCheckedContinuation { continuation in
+            preview.preparePreviewOfFile(at: invalid) { continuation.resume(returning: $0) }
+        }
+        XCTAssertNotNil(invalidError)
+        XCTAssertTrue(preview.view.subviews.isEmpty)
+        XCTAssertNil(preview.installedColorScheme)
+    }
+
     func testRepeatedPrepareReplacesHostedReader() async throws {
         let first = FileManager.default.temporaryDirectory.appendingPathComponent("marco-ql-\(UUID().uuidString).md")
         let second = FileManager.default.temporaryDirectory.appendingPathComponent("marco-ql-\(UUID().uuidString).md")
@@ -22,9 +43,10 @@ final class PreviewViewControllerTests: XCTestCase {
         XCTAssertNil(secondError)
         XCTAssertEqual(preview.view.subviews.count, 1)
         let prior = preview.view.subviews[0]
+        let installsBeforeAppearance = preview.installationCount
         let dark = preview.view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         preview.view.appearance = NSAppearance(named: dark ? .aqua : .darkAqua)
-        for _ in 0..<300 where preview.view.subviews.first === prior {
+        for _ in 0..<300 where preview.installationCount == installsBeforeAppearance {
             try? await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertEqual(preview.view.subviews.count, 1)

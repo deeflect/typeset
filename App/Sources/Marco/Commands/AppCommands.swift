@@ -153,6 +153,15 @@ struct MarcoCommands: Commands {
             if let guide = Bundle.main.url(forResource: "Welcome", withExtension: "md") {
                 Button("\(Bundle.main.displayName) Guide") { DocumentOpener.shared.open(guide) }
             }
+            Divider()
+            Button("Privacy Policy") { NSWorkspace.shared.open(URL(string: "https://typeset.md/privacy")!) }
+            Button("Support") { NSWorkspace.shared.open(URL(string: "https://typeset.md/support")!) }
+            if let privacy = Bundle.main.url(forResource: "Privacy", withExtension: "md") {
+                Button("Privacy Policy (Offline)") { DocumentOpener.shared.open(privacy) }
+            }
+            if let notices = Bundle.main.url(forResource: "ThirdPartyNotices", withExtension: "md") {
+                Button("Third-party Notices") { DocumentOpener.shared.open(notices) }
+            }
         }
 
         // MARK: Go — history

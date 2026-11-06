@@ -198,13 +198,18 @@ extension DocumentOpener {
     /// Grants (and persists) access to `root`, then opens its entry file; the
     /// window picks the folder up via `FolderIndex.rememberedRoot`.
     func openFolder(_ root: URL) {
-        guard FolderAccessStore.shared.grant(folder: root),
-              let entry = FolderIndex.entryFile(in: FolderIndex.scan(root)) else {
+        guard FolderAccessStore.shared.grant(folder: root) else {
             NSSound.beep()
             return
         }
-        FolderIndex.remember(root)
-        open(entry.url)
+        Task.detached(priority: .userInitiated) {
+            let files = FolderIndex.scan(root)
+            await MainActor.run {
+                guard let entry = FolderIndex.entryFile(in: files) else { NSSound.beep(); return }
+                FolderIndex.remember(root)
+                self.open(entry.url)
+            }
+        }
     }
 }
 

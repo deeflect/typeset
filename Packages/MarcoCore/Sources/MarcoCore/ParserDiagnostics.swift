@@ -37,7 +37,7 @@ extension MarkdownParser {
             ordinal += 1
         }
 
-        let document = Document(parsing: body)
+        let document = Document(parsing: bodyForParsing(body))
         let t2 = CFAbsoluteTimeGetCurrent()
         timing.cmarkParse = t2 - t1
 

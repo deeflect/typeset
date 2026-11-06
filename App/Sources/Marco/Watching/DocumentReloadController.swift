@@ -75,14 +75,16 @@ final class DocumentReloadController {
     }
 
     private var lastText: String = ""
+    private var diskSnapshot: DocumentFileIO.Snapshot?
     private var reloadGeneration = 0
     private var editRevision = 0
-    private var approvedDiskText: String?
+    private var approvedDiskSnapshot: DocumentFileIO.Snapshot?
     private var isStopped = false
     /// The current Markdown source: the live edit buffer while editing,
     /// otherwise the last text read from disk. Used by Copy as Rich
     /// Text's plain-Markdown pasteboard fallback.
     var currentText: String { isEditing ? editedText : lastText }
+    var hasUTF8BOM: Bool { diskSnapshot?.data.starts(with: [0xEF, 0xBB, 0xBF]) == true }
     private var watcher: FileWatcher?
     private var initialTask: Task<Void, Never>?
     private var reloadTask: Task<Void, Never>?
@@ -161,19 +163,20 @@ final class DocumentReloadController {
         let fileURL = url
         initialTask = Task.detached(priority: .userInitiated) { [weak self] in
             guard !Task.isCancelled else { return }
-            let result = Result { () -> (String, [Block]) in
+            let result = Result { () -> (DocumentFileIO.Snapshot, [Block]) in
                 let didAccess = fileURL.startAccessingSecurityScopedResource()
                 defer { if didAccess { fileURL.stopAccessingSecurityScopedResource() } }
-                let text = try String(contentsOf: fileURL, encoding: .utf8)
+                let snapshot = try DocumentFileIO.read(fileURL)
                 try Task.checkCancellation()
-                return (text, MarkdownParser.parse(text))
+                return (snapshot, MarkdownParser.parse(snapshot.text))
             }
             await MainActor.run { [weak self] in
                 guard let self, !self.isStopped, self.reloadGeneration == generation else { return }
                 self.isLoading = false
                 switch result {
-                case .success(let (text, blocks)):
-                    self.lastText = text
+                case .success(let (snapshot, blocks)):
+                    self.diskSnapshot = snapshot
+                    self.lastText = snapshot.text
                     self.blocks = blocks
                     self.loadError = nil
                 case .failure(let error):
@@ -199,7 +202,7 @@ final class DocumentReloadController {
         hasExternalChanges = true
         lastExternalChange = Date()
         if isEditing {
-            guard (try? String(contentsOf: url, encoding: .utf8)) != lastText else { return }
+            guard let current = try? DocumentFileIO.read(url), current != diskSnapshot else { return }
             let (newState, action) = EditConflictMachine.transition(state: conflictState, event: .externalChange)
             conflictState = newState
             if action == .showConflictBanner {
@@ -248,8 +251,11 @@ final class DocumentReloadController {
     }
 
     private func apply(_ result: ReloadResult, startTime: DispatchTime) {
+        diskSnapshot = result.snapshot
         if isEditing, conflictState == .clean { editedText = result.newText }
-        guard result.newText != lastText else { return }
+        let changed = Data(result.newText.utf8) != Data(lastText.utf8)
+        lastText = result.newText
+        guard changed else { return }
 
         let currentAnchorID = visibleBlockID
         let anchorIndex = currentAnchorID.flatMap { id in blocks.firstIndex { $0.id == id } } ?? 0
@@ -275,7 +281,6 @@ final class DocumentReloadController {
             pulsedBlockIDs.formUnion(changedIDs)
         }
         blocks = result.newBlocks
-        lastText = result.newText
 
         requestedBlockID = followModeEnabled ? (firstChangedID ?? anchorTarget) : anchorTarget
         onDocumentChanged?()
@@ -347,12 +352,12 @@ final class DocumentReloadController {
     /// only actually transitions on the clean↔dirty edge.
     func noteEditedTextChanged(_ text: String) {
         guard isEditing else { return }
-        if text != editedText {
+        if Data(text.utf8) != Data(editedText.utf8) {
             editRevision += 1
-            approvedDiskText = nil
+            approvedDiskSnapshot = nil
         }
         editedText = text
-        let isDirtyNow = text != lastText
+        let isDirtyNow = Data(text.utf8) != Data(lastText.utf8)
         switch (conflictState, isDirtyNow) {
         case (.clean, true):
             conflictState = EditConflictMachine.transition(state: .clean, event: .bufferEdited).state
@@ -375,21 +380,23 @@ final class DocumentReloadController {
         guard isEditing, conflictState != .clean else { return false }
         guard conflictState != .conflictPending else { return false }
         do {
-            let diskText = try String(contentsOf: url, encoding: .utf8)
-            if diskText != (approvedDiskText ?? lastText) {
+            let current = try DocumentFileIO.read(url)
+            guard let expected = approvedDiskSnapshot ?? diskSnapshot else { return false }
+            if current != expected {
                 conflictState = .conflictPending
                 return false
             }
-            try Data(editedText.utf8).write(to: url, options: .atomic)
-            watcher?.expectOwnWrite(contents: Data(editedText.utf8))
+            let saved = try DocumentFileIO.replace(url, text: editedText, expected: expected)
+            watcher?.expectOwnWrite(contents: saved.data)
             reloadGeneration += 1
+            diskSnapshot = saved
             lastText = editedText
             blocks = MarkdownParser.parse(editedText)
             onDocumentChanged?()
             conflictState = EditConflictMachine.transition(state: conflictState, event: .bufferSettled).state
             window?.isDocumentEdited = false
             saveError = nil
-            approvedDiskText = nil
+            approvedDiskSnapshot = nil
             return true
         } catch {
             saveError = "Couldn\u{2019}t save \(url.lastPathComponent): \(error.localizedDescription)"
@@ -407,8 +414,8 @@ final class DocumentReloadController {
     /// as-is — the next ⌘S overwrites disk.
     func resolveConflictKeepMine() {
         guard conflictState == .conflictPending else { return }
-        guard let diskText = try? String(contentsOf: url, encoding: .utf8) else { return }
-        approvedDiskText = diskText
+        guard let snapshot = try? DocumentFileIO.read(url) else { return }
+        approvedDiskSnapshot = snapshot
         conflictState = EditConflictMachine.transition(state: conflictState, event: .keepMine).state
     }
 
@@ -416,7 +423,7 @@ final class DocumentReloadController {
     /// normal position-preserving path, discarding the in-progress edits.
     func resolveConflictTakeTheirs() {
         guard conflictState == .conflictPending else { return }
-        approvedDiskText = nil
+        approvedDiskSnapshot = nil
         reloadGeneration += 1
         editRevision += 1
         conflictState = EditConflictMachine.transition(state: conflictState, event: .takeTheirs).state
@@ -433,7 +440,7 @@ final class DocumentReloadController {
     /// blind, per the M3 spec.
     func toggleCheckbox(blockStartLine: Int, itemLineOffset: Int, checked: Bool) {
         guard !isEditing, !isLoading else { return }
-        guard let diskText = try? String(contentsOf: url, encoding: .utf8), diskText == lastText else {
+        guard let current = try? DocumentFileIO.read(url), current == diskSnapshot else {
             handleExternalChange()
             return
         }
@@ -445,9 +452,10 @@ final class DocumentReloadController {
         }
 
         do {
-            try Data(newText.utf8).write(to: url, options: .atomic)
-            watcher?.expectOwnWrite(contents: Data(newText.utf8))
+            let saved = try DocumentFileIO.replace(url, text: newText, expected: current)
+            watcher?.expectOwnWrite(contents: saved.data)
             reloadGeneration += 1
+            diskSnapshot = saved
             blocks = MarkdownParser.parse(newText)
             lastText = newText
             onDocumentChanged?()
@@ -471,7 +479,8 @@ struct ReloadReport: Sendable {
 /// from `Task.detached` back to the main actor without copying concerns —
 /// `Block`/`BlockChange` are themselves `Sendable` value types.
 private struct ReloadResult: Sendable {
-    let newText: String
+    let snapshot: DocumentFileIO.Snapshot
+    var newText: String { snapshot.text }
     let newBlocks: [Block]
     let changes: [BlockChange]
 }
@@ -483,7 +492,7 @@ private nonisolated func computeReload(url: URL, oldText: String, oldBlocks: [Bl
     guard !Task.isCancelled else { return nil }
     let didAccess = url.startAccessingSecurityScopedResource()
     defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
-    guard let newText = try? String(contentsOf: url, encoding: .utf8) else {
+    guard let snapshot = try? DocumentFileIO.read(url) else {
         // Read races with an in-flight delete/replace are expected and
         // harmless here: the watcher's own removed-state tracking (not
         // this pipeline) is what surfaces that to the UI. Just skip this
@@ -491,9 +500,52 @@ private nonisolated func computeReload(url: URL, oldText: String, oldBlocks: [Bl
         return nil
     }
     guard !Task.isCancelled else { return nil }
+    let newText = snapshot.text
     let newBlocks: [Block] = newText.isEmpty
         ? []
         : MarkdownParser.reparseIncremental(oldText: oldText, newText: newText, oldBlocks: oldBlocks)
     let changes = BlockDiffer.diff(old: oldBlocks, new: newBlocks)
-    return ReloadResult(newText: newText, newBlocks: newBlocks, changes: changes)
+    return ReloadResult(snapshot: snapshot, newBlocks: newBlocks, changes: changes)
+}
+
+enum DocumentFileIO {
+    struct Snapshot: Equatable, Sendable {
+        let target: URL
+        let data: Data
+        let text: String
+
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.target == rhs.target && lhs.data == rhs.data
+        }
+    }
+
+    static func read(_ url: URL) throws -> Snapshot {
+        let target = url.resolvingSymlinksInPath()
+        let data = try Data(contentsOf: target)
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw CocoaError(.fileReadInapplicableStringEncoding)
+        }
+        return Snapshot(target: target, data: data, text: text)
+    }
+
+    static func replace(_ url: URL, text: String, expected: Snapshot? = nil, preserveBOM: Bool = false) throws -> Snapshot {
+        let target = url.resolvingSymlinksInPath()
+        if let expected, try read(url) != expected {
+            throw CocoaError(.fileWriteFileExists)
+        }
+        let bom = (expected?.data.starts(with: [0xEF, 0xBB, 0xBF]) == true || preserveBOM)
+            ? Data([0xEF, 0xBB, 0xBF]) : Data()
+        let data = bom + Data(text.utf8)
+        if FileManager.default.fileExists(atPath: target.path) {
+            let replacementDirectory = try FileManager.default.url(
+                for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: target, create: true)
+            defer { try? FileManager.default.removeItem(at: replacementDirectory) }
+            let temporary = replacementDirectory.appendingPathComponent(UUID().uuidString)
+            try data.write(to: temporary, options: .atomic)
+            _ = try FileManager.default.replaceItemAt(target, withItemAt: temporary)
+        } else {
+            try data.write(to: target, options: .atomic)
+        }
+        return Snapshot(target: target, data: data, text: text)
+    }
 }

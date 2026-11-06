@@ -53,7 +53,7 @@ public enum MarkdownParser {
         // extensions (tables, task lists, strikethrough, autolinks) by
         // default — no extra options needed.
         let bodyString = String(body)
-        let document = Document(parsing: bodyString)
+        let document = Document(parsing: bodyForParsing(bodyString))
 
         // Split once and reuse for every block: `sourceText` used to
         // re-split `body` per block, which is O(n) per call and thus
@@ -73,6 +73,33 @@ public enum MarkdownParser {
         }
 
         return blocks
+    }
+
+    /// cmark consumes some footnote definitions as link definitions.
+    /// Break that syntax only for parsing; block raw text still comes from the original lines.
+    public static func bodyForParsing(_ body: String) -> String {
+        guard body.contains("[^") else { return body }
+        let lines = body.split(separator: "\n", omittingEmptySubsequences: false)
+        let candidates = lines.indices.filter {
+            lines[$0].range(of: #"^ {0,3}\[\^[^\]\s]+\]:"#, options: .regularExpression) != nil
+        }
+        guard !candidates.isEmpty else { return body }
+        let original = Document(parsing: body)
+        var codeLines: Set<Int> = []
+        func collectCode(_ node: any Markup) {
+            if (node is CodeBlock || node is InlineCode || node is HTMLBlock), let range = node.range {
+                codeLines.formUnion((range.lowerBound.line - 1)...(range.upperBound.line - 1))
+            }
+            for child in node.children { collectCode(child) }
+        }
+        collectCode(original)
+        var prepared = lines.map(String.init)
+        for line in candidates where !codeLines.contains(line) {
+            if let separator = prepared[line].range(of: "]:") {
+                prepared[line].replaceSubrange(separator, with: "]\\:")
+            }
+        }
+        return prepared.joined(separator: "\n")
     }
 
     // MARK: - Frontmatter

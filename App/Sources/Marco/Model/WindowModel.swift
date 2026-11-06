@@ -431,12 +431,12 @@ final class WindowModel {
     func saveAs(to destination: URL) -> Bool {
         guard let controller, controller.isEditing else { return false }
         let destination = destination.standardizedFileURL
-        guard destination != currentURL else {
+        guard destination.resolvingSymlinksInPath() != currentURL?.resolvingSymlinksInPath() else {
             controller.saveError = "Choose a different file to save to"
             return false
         }
         do {
-            try Data(controller.editedText.utf8).write(to: destination, options: .atomic)
+            _ = try DocumentFileIO.replace(destination, text: controller.editedText, preserveBOM: controller.hasUTF8BOM)
             history[historyIndex] = destination
             activate(destination, restoreScroll: false)
             return true

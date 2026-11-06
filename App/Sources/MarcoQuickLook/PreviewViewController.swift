@@ -37,6 +37,8 @@ final class PreviewViewController: NSViewController, @MainActor QLPreviewingCont
         currentURL = url
         preparationTask?.cancel()
         isPreparing = true
+        view.subviews.forEach { $0.removeFromSuperview() }
+        installedColorScheme = nil
         let appearance = view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
             ? ColorScheme.dark : .light
         let theme = Theme(colorScheme: appearance, scale: 1)

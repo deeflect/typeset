@@ -11,8 +11,8 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "../MarcoCore"),
-        .package(url: "https://github.com/apple/swift-markdown.git", from: "0.6.0"),
-        .package(url: "https://github.com/raspu/Highlightr.git", from: "2.2.0")
+        .package(url: "https://github.com/apple/swift-markdown.git", exact: "0.8.0"),
+        .package(url: "https://github.com/raspu/Highlightr.git", exact: "2.3.0")
     ],
     targets: [
         .target(
