@@ -61,7 +61,7 @@ fi
 if [ "$EXPORT_METHOD" = app-store-connect ]; then
   run xcodebuild -scheme Marco -configuration Release -archivePath "$ARCHIVE_PATH" \
     -destination 'generic/platform=macOS' "DEVELOPMENT_TEAM=$TEAM_ID" \
-    -allowProvisioningUpdates archive
+    -allowProvisioningUpdates -allowProvisioningDeviceRegistration archive
 else
   run xcodebuild -scheme Marco -configuration Release -archivePath "$ARCHIVE_PATH" \
     -destination 'generic/platform=macOS' "DEVELOPMENT_TEAM=$TEAM_ID" \

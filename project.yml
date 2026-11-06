@@ -114,6 +114,8 @@ targets:
         MARKETING_VERSION: $(MARKETING_VERSION)
         SWIFT_EMIT_LOC_STRINGS: NO
         SKIP_INSTALL: YES
+        # TestFlight rejects bundles without an embedded profile (ITMS-90889).
+        PROVISIONING_PROFILE_REQUIRED: YES
     info:
       path: App/Sources/MarcoQuickLook/Info.plist
       properties:
