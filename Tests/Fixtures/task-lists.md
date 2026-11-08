@@ -1,7 +1,7 @@
 # Task Lists
 
 - [x] Scaffold XcodeGen project
-- [x] Write MarcoCore parser
+- [x] Write TypesetCore parser
 - [ ] Build the real block renderer
 - [ ] Ship v1.0
 

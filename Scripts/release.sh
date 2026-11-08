@@ -52,18 +52,18 @@ if [ "$DRY_RUN" != 1 ]; then mkdir -p "$OUT_DIR"; fi
 run xcodegen generate
 
 if [ -z "$TEAM_ID" ]; then
-  run xcodebuild -scheme Marco -configuration Release -archivePath "$ARCHIVE_PATH" \
+  run xcodebuild -scheme Typeset -configuration Release -archivePath "$ARCHIVE_PATH" \
     -destination 'generic/platform=macOS' CODE_SIGNING_ALLOWED=NO archive
   echo "Unsigned QA archive: $ARCHIVE_PATH/Products/Applications/Typeset.app"
   exit 0
 fi
 
 if [ "$EXPORT_METHOD" = app-store-connect ]; then
-  run xcodebuild -scheme Marco -configuration Release -archivePath "$ARCHIVE_PATH" \
+  run xcodebuild -scheme Typeset -configuration Release -archivePath "$ARCHIVE_PATH" \
     -destination 'generic/platform=macOS' "DEVELOPMENT_TEAM=$TEAM_ID" \
     -allowProvisioningUpdates -allowProvisioningDeviceRegistration archive
 else
-  run xcodebuild -scheme Marco -configuration Release -archivePath "$ARCHIVE_PATH" \
+  run xcodebuild -scheme Typeset -configuration Release -archivePath "$ARCHIVE_PATH" \
     -destination 'generic/platform=macOS' "DEVELOPMENT_TEAM=$TEAM_ID" \
     "CODE_SIGN_IDENTITY=$CERT_CLASS" -allowProvisioningUpdates archive
 fi

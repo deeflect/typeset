@@ -1,4 +1,4 @@
-name: Marco
+name: Typeset
 options:
   bundleIdPrefix: com.deeflect
   deploymentTarget:
@@ -10,10 +10,10 @@ configFiles:
   Release: Config/App.xcconfig
 
 packages:
-  MarcoCore:
-    path: Packages/MarcoCore
-  MarcoRendering:
-    path: Packages/MarcoRendering
+  TypesetCore:
+    path: Packages/TypesetCore
+  TypesetRendering:
+    path: Packages/TypesetRendering
   swift-markdown:
     url: https://github.com/apple/swift-markdown.git
     exactVersion: 0.8.0
@@ -25,33 +25,33 @@ packages:
     exactVersion: 2.3.0
 
 targets:
-  Marco:
+  Typeset:
     type: application
     platform: macOS
     deploymentTarget: "26.0"
     sources:
-      - path: App/Sources/Marco
+      - path: App/Sources/Typeset
         excludes:
           - "Resources/**"
-      - path: App/Sources/Marco/Resources
+      - path: App/Sources/Typeset/Resources
         buildPhase: resources
     dependencies:
-      - package: MarcoCore
-      - package: MarcoRendering
+      - package: TypesetCore
+      - package: TypesetRendering
       - package: Highlightr
-      - target: MarcoQuickLook
+      - target: TypesetQuickLook
         embed: true
     settings:
       base:
         PRODUCT_NAME: $(APP_NAME)
-        PRODUCT_MODULE_NAME: Marco # internal Swift module; the rename touches APP_NAME only
+        PRODUCT_MODULE_NAME: Typeset
         PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID)
         MARKETING_VERSION: $(MARKETING_VERSION)
         ENABLE_PREVIEWS: YES
         SWIFT_EMIT_LOC_STRINGS: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
-      path: App/Sources/Marco/Info.plist
+      path: App/Sources/Typeset/Info.plist
       properties:
         CFBundleDisplayName: $(APP_NAME)
         CFBundleName: $(APP_NAME)
@@ -72,6 +72,7 @@ targets:
             LSHandlerRank: Default
             LSItemContentTypes:
               - net.daringfireball.markdown
+              - org.mdxjs.mdx
         UTImportedTypeDeclarations:
           - UTTypeIdentifier: net.daringfireball.markdown
             UTTypeDescription: Markdown Document
@@ -82,8 +83,18 @@ targets:
                 - md
                 - markdown
                 - mdown
+          # No system or common third-party UTI for .mdx exists; named after mdxjs.com so
+          # another app importing the same id agrees with us.
+          - UTTypeIdentifier: org.mdxjs.mdx
+            UTTypeDescription: MDX Document
+            UTTypeConformsTo:
+              - net.daringfireball.markdown
+              - public.plain-text
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - mdx
     entitlements:
-      path: App/Sources/Marco/Marco.entitlements
+      path: App/Sources/Typeset/Typeset.entitlements
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.files.user-selected.read-write: true
@@ -94,22 +105,22 @@ targets:
         # into the signed binary and would draw an App Store review question
         # for no user-facing benefit. The headless benches read fixtures via
         # the unsandboxed copy Scripts/snapshot.sh already builds.
-  MarcoQuickLook:
+  TypesetQuickLook:
     type: app-extension
     platform: macOS
     deploymentTarget: "26.0"
     sources:
-      - path: App/Sources/MarcoQuickLook
+      - path: App/Sources/TypesetQuickLook
         excludes:
           - "Resources/**"
-      - path: App/Sources/MarcoQuickLook/Resources
+      - path: App/Sources/TypesetQuickLook/Resources
         buildPhase: resources
     dependencies:
-      - package: MarcoCore
-      - package: MarcoRendering
+      - package: TypesetCore
+      - package: TypesetRendering
     settings:
       base:
-        PRODUCT_NAME: MarcoQuickLook
+        PRODUCT_NAME: TypesetQuickLook
         PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID).quicklook
         MARKETING_VERSION: $(MARKETING_VERSION)
         SWIFT_EMIT_LOC_STRINGS: NO
@@ -117,7 +128,7 @@ targets:
         # TestFlight rejects bundles without an embedded profile (ITMS-90889).
         PROVISIONING_PROFILE_REQUIRED: YES
     info:
-      path: App/Sources/MarcoQuickLook/Info.plist
+      path: App/Sources/TypesetQuickLook/Info.plist
       properties:
         CFBundleDisplayName: $(APP_NAME) Quick Look
         CFBundleShortVersionString: $(MARKETING_VERSION)
@@ -130,57 +141,60 @@ targets:
         # is why Space on a .md file showed raw Markdown.
         NSExtension:
           NSExtensionPointIdentifier: com.apple.quicklook.preview
-          NSExtensionPrincipalClass: PreviewViewController
+          # Swift class names are module-qualified; a bare name never resolves
+          # and Quick Look spins forever (QLPreviewExtensionViewController assert).
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PreviewViewController
           NSExtensionAttributes:
             QLSupportedContentTypes:
               - net.daringfireball.markdown
+              - org.mdxjs.mdx
             QLSupportsSearchableItems: false
     entitlements:
-      path: App/Sources/MarcoQuickLook/MarcoQuickLook.entitlements
+      path: App/Sources/TypesetQuickLook/TypesetQuickLook.entitlements
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.files.user-selected.read-only: true
-  MarcoTests:
+  TypesetTests:
     type: bundle.unit-test
     platform: macOS
     deploymentTarget: "26.0"
     sources:
-      - path: App/Tests/MarcoTests
+      - path: App/Tests/TypesetTests
     dependencies:
-      - target: Marco
-      - package: MarcoRendering
-      - package: MarcoCore
+      - target: Typeset
+      - package: TypesetRendering
+      - package: TypesetCore
     settings:
       base:
         SWIFT_EMIT_LOC_STRINGS: NO
         GENERATE_INFOPLIST_FILE: YES
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/$(APP_NAME).app/Contents/MacOS/$(APP_NAME)
-  MarcoQuickLookTests:
+  TypesetQuickLookTests:
     type: bundle.unit-test
     platform: macOS
     deploymentTarget: "26.0"
     sources:
-      - path: App/Sources/MarcoQuickLook/PreviewViewController.swift
-      - path: App/Tests/MarcoQuickLookTests
+      - path: App/Sources/TypesetQuickLook/PreviewViewController.swift
+      - path: App/Tests/TypesetQuickLookTests
     dependencies:
-      - package: MarcoCore
-      - package: MarcoRendering
+      - package: TypesetCore
+      - package: TypesetRendering
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
 
 schemes:
-  Marco:
+  Typeset:
     build:
       targets:
-        Marco: all
-        MarcoQuickLook: all
-        MarcoTests: [test]
+        Typeset: all
+        TypesetQuickLook: all
+        TypesetTests: [test]
     test:
       config: Debug
       gatherCoverageData: false
       targets:
-        - name: MarcoTests
-        - name: MarcoQuickLookTests
+        - name: TypesetTests
+        - name: TypesetQuickLookTests
     run:
       config: Debug

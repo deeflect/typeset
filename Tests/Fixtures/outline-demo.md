@@ -1,6 +1,6 @@
-# Marco Engine Guide
+# Typeset Engine Guide
 
-Marco renders each Markdown **block** as its own SwiftUI view. This guide walks
+Typeset renders each Markdown **block** as its own SwiftUI view. This guide walks
 the block pipeline from bytes on disk to pixels on screen, and back again when
 an agent rewrites the file underneath you.
 
@@ -12,7 +12,7 @@ content hash so the differ can tell an untouched block from a changed one.
 ### The Block model
 
 A block is the smallest unit the renderer reasons about. Splitting the document
-into blocks is what lets Marco reuse an unchanged block across a live reload.
+into blocks is what lets Typeset reuse an unchanged block across a live reload.
 
 - Each block hashes its own raw text.
 - A stable identity keeps a block's view alive across reloads.
@@ -47,7 +47,7 @@ reload never re-highlights an unchanged block.
 
 ## Live reload
 
-When the file changes on disk, Marco diffs the new blocks against the old ones
+When the file changes on disk, Typeset diffs the new blocks against the old ones
 and re-renders only what changed. A changed block gets a one-time pulse.
 
 - A clean editor takes the disk version silently.

@@ -1,6 +1,5 @@
 // Single source of truth for renaming the app.
-// To rename: edit these three values (and optionally find/replace the
-// "Marco" module prefix in source — see README.md).
+// To rename the shipped app: edit these values (see README.md).
 
 APP_NAME = Typeset
 APP_BUNDLE_ID = com.deeflect.typeset
