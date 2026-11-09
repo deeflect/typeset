@@ -11,7 +11,8 @@ final class FolderIndexTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let files = ["README.md", ".claude/plans/next.md", "specs/a.markdown", "notes.txt",
-                     ".git/HEAD.md", "node_modules/x/README.md", "dist/out.md", "a/b/c/d/e/f/g/h/i/deep.md"]
+                     ".git/HEAD.md", "node_modules/x/README.md", "dist/out.md", "a/b/c/d/e/f/g/h/i/deep.md",
+                     ".venv/lib/x.md", "target/doc.md", "build/out.md", "__pycache__/x.md", ".next/x.md"]
         for path in files {
             let url = root.appendingPathComponent(path)
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -20,6 +21,7 @@ final class FolderIndexTests: XCTestCase {
         let found = Set(FolderIndex.scan(root).map(\.relativePath))
         XCTAssertEqual(found, ["README.md", ".claude/plans/next.md", "specs/a.markdown"])
         XCTAssertEqual(FolderIndex.scan(root, limit: 2).count, 2)
+        XCTAssertLessThan(FolderIndex.scan(root, maxVisited: 1).count, 3)
         XCTAssertEqual(FolderIndex.entryFile(in: FolderIndex.scan(root))?.relativePath, "README.md")
     }
 

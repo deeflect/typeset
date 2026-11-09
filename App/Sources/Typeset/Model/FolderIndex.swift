@@ -24,6 +24,7 @@ final class FolderIndex {
     let root: URL
     private(set) var files: [Entry] = []
     @ObservationIgnored private var generation = 0
+    @ObservationIgnored private var rescanTask: Task<Void, Never>?
     @ObservationIgnored nonisolated(unsafe) private var stream: FSEventStreamRef?
 
     init(root: URL) {
@@ -83,26 +84,39 @@ final class FolderIndex {
         let relevant = paths.contains { path in
             !path.split(separator: "/").contains { Self.excluded.contains(String($0)) }
         }
-        if relevant { rescan() }
+        guard relevant else { return }
+        // A busy tree (an agent writing, a build) fires event after event;
+        // rescan once things settle instead of per batch.
+        rescanTask?.cancel()
+        rescanTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            self?.rescan()
+        }
     }
 
     // MARK: - Scanning (pure)
 
     nonisolated static let markdownExtensions: Set<String> = ["md", "markdown", "mdown", "mdx"]
-    nonisolated static let excluded: Set<String> = [".git", "node_modules", ".build", "DerivedData", "Pods", "vendor", "dist"]
+    nonisolated static let excluded: Set<String> = [
+        ".git", "node_modules", ".build", "DerivedData", "Pods", "vendor", "dist",
+        ".venv", "venv", "target", "__pycache__", ".next", "build",
+    ]
 
     /// Every Markdown file under `root`, dot-folders included (`.claude`,
     /// `.github`), heavy build/vendor trees excluded, newest first.
-    // ponytail: hard cap of `limit` files / `maxDepth` levels in enumeration
-    // order, so a huge tree silently truncates; paginate or warn if real
-    // repos hit it.
-    nonisolated static func scan(_ root: URL, limit: Int = 2_000, maxDepth: Int = 8) -> [Entry] {
+    // ponytail: hard cap of `limit` files / `maxDepth` levels / `maxVisited`
+    // filesystem entries in enumeration order, so a huge tree (a home
+    // folder) silently truncates; paginate or warn if real repos hit it.
+    nonisolated static func scan(_ root: URL, limit: Int = 2_000, maxDepth: Int = 8, maxVisited: Int = 50_000) -> [Entry] {
         let root = root.standardizedFileURL
         let keys: [URLResourceKey] = [.isDirectoryKey, .contentModificationDateKey]
         guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys) else { return [] }
         let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
         var result: [Entry] = []
-        while let url = enumerator.nextObject() as? URL, result.count < limit {
+        var visited = 0
+        while visited < maxVisited, let url = enumerator.nextObject() as? URL, result.count < limit {
+            visited += 1
             let values = try? url.resourceValues(forKeys: Set(keys))
             if values?.isDirectory == true {
                 if excluded.contains(url.lastPathComponent) || enumerator.level >= maxDepth {

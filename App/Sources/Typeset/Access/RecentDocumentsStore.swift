@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import os
+import TypesetRendering
 
 /// The empty-state "home screen" recent-files list (PLAN §6). Persists a
 /// small, ordered set of security-scoped bookmarks for documents the user
@@ -15,6 +16,8 @@ final class RecentDocumentsStore {
     /// A resolved, openable recent. `url` already has its security scope
     /// started (held for the process lifetime) so reading it just works.
     struct Entry: Identifiable, Equatable {
+        /// The persisted path key (the resolved `url` may differ after a move).
+        let key: String
         let url: URL
         var id: String { url.path }
         var name: String { url.lastPathComponent }
@@ -36,19 +39,19 @@ final class RecentDocumentsStore {
 
     /// Records `url` as the most-recent document. Creates a fresh
     /// security-scoped bookmark (the file is readable right now — it was just
-    /// opened), moves it to the front, dedupes, and caps the list.
+    /// opened), moves it to the front, dedupes, and caps the list. Only the
+    /// new entry is resolved; other entries keep their scopes untouched, so
+    /// a document open from Recents never loses access mid-session.
     func record(_ url: URL) {
         let std = url.standardizedFileURL
-        guard std.isFileURL else { return }
+        guard std.isFileURL, entries.first?.key != std.path else { return }
 
         var stored = persistedDict()
         // Bookmarking needs live access; the opened doc already has it, but a
         // sibling reached via a folder grant may need its scope started first.
         let didStart = std.startAccessingSecurityScopedResource()
         defer { if didStart { std.stopAccessingSecurityScopedResource() } }
-        guard let data = try? std.bookmarkData(
-            options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil
-        ) else { return }
+        guard let data = SecurityScopedBookmark.make(std) else { return }
         stored[std.path] = BookmarkRecord(bookmark: data, openedAt: Date())
 
         // Keep only the newest `maxCount` by openedAt.
@@ -56,7 +59,16 @@ final class RecentDocumentsStore {
         var kept: [String: BookmarkRecord] = [:]
         for (path, record) in trimmed { kept[path] = record }
         writePersisted(kept)
-        rebuildEntries(from: kept)
+
+        for entry in entries where kept[entry.key] == nil || entry.key == std.path {
+            entry.url.stopAccessingSecurityScopedResource()
+        }
+        var next = entries.filter { kept[$0.key] != nil && $0.key != std.path }
+        if case .available(let resolved, _) = SecurityScopedBookmark.resolve(data, path: std.path),
+           resolved.startAccessingSecurityScopedResource() {
+            next.insert(Entry(key: std.path, url: resolved), at: 0)
+        }
+        entries = next
     }
 
     /// Removes one entry (e.g. a "Clear" affordance, or a file that no longer
@@ -64,16 +76,16 @@ final class RecentDocumentsStore {
     func remove(_ entry: Entry) {
         entry.url.stopAccessingSecurityScopedResource()
         var stored = persistedDict()
-        stored.removeValue(forKey: entry.url.standardizedFileURL.path)
+        stored.removeValue(forKey: entry.key)
         writePersisted(stored)
-        rebuildEntries(from: stored)
+        entries.removeAll { $0.key == entry.key }
     }
 
     #if DEBUG
     /// Snapshot/preview seam: populate the list with plain file URLs (no
     /// bookmarks) so the empty-state home screen can be captured headlessly.
     func seedForSnapshot(_ urls: [URL]) {
-        entries = urls.map { Entry(url: $0.standardizedFileURL) }
+        entries = urls.map { Entry(key: $0.standardizedFileURL.path, url: $0.standardizedFileURL) }
     }
     #endif
 
@@ -107,34 +119,28 @@ final class RecentDocumentsStore {
     }
 
     /// Resolves every stored bookmark, starts its scope, and publishes the
-    /// live `entries` ordered newest-first. Drops bookmarks that no longer
-    /// resolve (file moved/deleted) so the list self-heals.
+    /// live `entries` ordered newest-first. Drops only bookmarks whose file
+    /// is gone (moved/deleted) so the list self-heals; one on an unplugged
+    /// drive is kept for next time.
     private func rebuildEntries(from dict: [String: BookmarkRecord]) {
-        // Stop any scopes we currently hold before re-resolving.
-        for entry in entries { entry.url.stopAccessingSecurityScopedResource() }
-
         var resolved: [(entry: Entry, openedAt: Date)] = []
         var pruned = dict
         for (path, record) in dict {
-            var isStale = false
-            guard let url = try? URL(
-                resolvingBookmarkData: record.bookmark, options: [.withSecurityScope],
-                relativeTo: nil, bookmarkDataIsStale: &isStale
-            ), url.startAccessingSecurityScopedResource() else {
+            switch SecurityScopedBookmark.resolve(record.bookmark, path: path) {
+            case .missing:
                 pruned.removeValue(forKey: path)
+            case .unavailable:
                 continue
+            case .available(let url, let refreshed):
+                guard url.startAccessingSecurityScopedResource() else { continue }
+                guard FileManager.default.fileExists(atPath: url.path) else {
+                    url.stopAccessingSecurityScopedResource()
+                    pruned.removeValue(forKey: path)
+                    continue
+                }
+                if let refreshed { pruned[path]?.bookmark = refreshed }
+                resolved.append((Entry(key: path, url: url), record.openedAt))
             }
-            guard FileManager.default.fileExists(atPath: url.path) else {
-                url.stopAccessingSecurityScopedResource()
-                pruned.removeValue(forKey: path)
-                continue
-            }
-            if isStale, let refreshed = try? url.bookmarkData(
-                options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil
-            ) {
-                pruned[path]?.bookmark = refreshed
-            }
-            resolved.append((Entry(url: url), record.openedAt))
         }
 
         if pruned != dict { writePersisted(pruned) }

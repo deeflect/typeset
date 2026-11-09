@@ -53,6 +53,9 @@ final class FileWatcher: @unchecked Sendable {
     /// disappearance that outlasts `removedGracePeriod` is reported.
     private var hasReportedRemoved = false
     private var expectedContents: Data?
+    /// Inode/size/mtime of the file as last seen, so a directory event for
+    /// a sibling file (or a stray `.DS_Store`) doesn't count as a change.
+    private var lastIdentity: [Int]?
 
     private static let log = Logger(subsystem: "com.deeflect.typeset", category: "FileWatcher")
 
@@ -113,6 +116,7 @@ final class FileWatcher: @unchecked Sendable {
         source.setCancelHandler { close(fd) }
         source.resume()
         fileSource = source
+        lastIdentity = identity()
         markRestoredIfNeeded()
     }
 
@@ -159,7 +163,7 @@ final class FileWatcher: @unchecked Sendable {
         if exists, fileSource == nil {
             attachFileSource()
             scheduleDebouncedReload()
-        } else if exists {
+        } else if exists, identity() != lastIdentity {
             scheduleDebouncedReload()
         }
         // If it still doesn't exist, keep waiting — the grace timer (if
@@ -198,12 +202,19 @@ final class FileWatcher: @unchecked Sendable {
         }
     }
 
+    private func identity() -> [Int]? {
+        var info = stat()
+        guard stat(path.path, &info) == 0 else { return nil }
+        return [Int(info.st_ino), Int(info.st_size), info.st_mtimespec.tv_sec, info.st_mtimespec.tv_nsec]
+    }
+
     private func scheduleDebouncedReload() {
         debounceTimer?.cancel()
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + debounceInterval)
         timer.setEventHandler { [weak self] in
             guard let self else { return }
+            self.lastIdentity = self.identity()
             if let expected = self.expectedContents {
                 self.expectedContents = nil
                 if (try? Data(contentsOf: self.path)) == expected { return }

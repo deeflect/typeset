@@ -1,11 +1,12 @@
 import AppKit
-import UniformTypeIdentifiers
 import TypesetRendering
 
 /// Bridges AppKit-only entry points (Finder double-click / drag-to-Dock,
 /// the classic `NSOpenPanel`, Dock reopen) into `DocumentOpener`, which
 /// decides which window each request should land in.
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var zoomMonitor: Any?
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         MainActor.assumeIsolated {
             DocumentOpener.shared.prepareToTerminate() ? .terminateNow : .terminateCancel
@@ -15,6 +16,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Resolves + starts accessing every persisted folder-access
         // bookmark (see FolderAccessStore) and logs the active grants.
         _ = FolderAccessStore.shared
+        // ⌘= is the unshifted Zoom In on US layouts; SwiftUI's "+" shortcut
+        // only matches ⇧⌘=, so catch the bare chord here.
+        zoomMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+                  event.charactersIgnoringModifiers == "=" else { return event }
+            MainActor.assumeIsolated { TypesetCommands.zoom(by: 0.1) }
+            return nil
+        }
         // Headless bench/snapshot entry points (env-var triggered) never
         // ship in Release: the runner types themselves are `#if DEBUG`-gated
         // (PLAN §8), so a Release binary has no code path that reads
@@ -67,17 +76,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !flag else { return false }
         MainActor.assumeIsolated { DocumentOpener.shared.openEmptyWindow() }
         return false
-    }
-
-    @MainActor
-    func openPanel() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = FolderIndex.markdownExtensions.sorted().compactMap {
-            UTType(filenameExtension: $0)
-        }
-        panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = true
-        guard panel.runModal() == .OK else { return }
-        DocumentOpener.shared.open(panel.urls)
     }
 }

@@ -116,6 +116,7 @@ struct SourceEditorView: NSViewRepresentable {
         textView.delegate = context.coordinator
         textStorage.delegate = context.coordinator
         textView.string = text
+        context.coordinator.syncedText = text
 
         handle.textView = textView
         DispatchQueue.main.async { [weak handle] in handle?.flushPendingFind() }
@@ -142,11 +143,17 @@ struct SourceEditorView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? NSTextView else { return }
         context.coordinator.parent = self
-        if textView.string != text {
+        // Compared against the last text we exchanged with the binding, not
+        // `textView.string` (which bridges a full copy on every update).
+        if text != context.coordinator.syncedText {
             // External change (e.g. a silent watcher reload while clean) —
             // replace the buffer and restyle the whole document, since this
-            // isn't a local edit the incremental path can target.
+            // isn't a local edit the incremental path can target. Undo
+            // history described the old buffer; replaying it here would
+            // corrupt the new one.
             textView.string = text
+            context.coordinator.syncedText = text
+            textView.undoManager?.removeAllActions()
             if let storage = textView.textStorage {
                 MarkdownSyntaxStyler.styleFullDocument(storage, baseFont: Self.font, colors: colors)
             }
@@ -159,6 +166,7 @@ struct SourceEditorView: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate, NSTextStorageDelegate {
         var parent: SourceEditorView
+        var syncedText = ""
 
         init(parent: SourceEditorView) {
             self.parent = parent
@@ -166,7 +174,9 @@ struct SourceEditorView: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
-            parent.text = textView.string
+            let text = textView.string
+            syncedText = text
+            parent.text = text
         }
 
         // Incremental styling: style only the edited paragraph range so

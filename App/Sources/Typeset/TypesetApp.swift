@@ -33,7 +33,7 @@ struct TypesetApp: App {
         // way back to a document.
         .restorationBehavior(.disabled)
         .commands {
-            TypesetCommands(openPanel: { appDelegate.openPanel() })
+            TypesetCommands()
         }
     }
 }

@@ -21,6 +21,9 @@ final class WindowModel {
     /// on navigation; `nil` only for the empty-state window (no file).
     private(set) var controller: DocumentReloadController?
     private(set) var readingSnapshot: NativeMarkdownDocument?
+    /// The source `readingSnapshot` was built from; a checkbox click on a
+    /// snapshot older than the controller's text is stale and dropped.
+    private var snapshotSource: String?
     /// Toggled frontmatter, `<details>` and MDX-import keys for this document (see NativeMarkdownDocument.build).
     private(set) var expanded: Set<String> = []
     /// R05: "Copied as quote · lines a–b"; `noticeID` bumps on every copy.
@@ -175,6 +178,7 @@ final class WindowModel {
         snapshotGeneration += 1
         snapshotTask?.cancel()
         readingSnapshot = nil
+        snapshotSource = nil
         controller?.stop()
         let controller = DocumentReloadController(url: url)
         controller.window = window
@@ -233,8 +237,18 @@ final class WindowModel {
                 if let jump = controller.takeRequestedBlockID() { self.nativeReader.queueJump(toBlock: jump) }
                 if !controller.pulsedBlockIDs.isEmpty { self.nativeReader.queuePulse(blockIDs: controller.pulsedBlockIDs) }
                 self.readingSnapshot = snapshot
+                self.snapshotSource = source
             }
         }
+    }
+
+    /// Reading-view checkbox click. The click's line numbers come from the
+    /// visible snapshot, so it only applies while that snapshot still
+    /// matches the text on disk (a second click before the rebuild after
+    /// the first write would otherwise flip the wrong line).
+    func toggleCheckbox(blockStartLine: Int, itemLineOffset: Int, checked: Bool) {
+        guard let controller, snapshotSource.map({ $0.utf8.elementsEqual(controller.currentText.utf8) }) == true else { return }
+        controller.toggleCheckbox(blockStartLine: blockStartLine, itemLineOffset: itemLineOffset, checked: checked)
     }
 
     func toggle(_ key: String) {
@@ -430,7 +444,26 @@ final class WindowModel {
 
     // MARK: - Export / clipboard (menu actions)
 
-    func save() { controller?.save() }
+    /// ⌘S. A New from Clipboard document lives in the temporary folder, so
+    /// its first save asks where to put it.
+    func save() {
+        guard let controller else { return }
+        if DocumentOpener.shared.isUntitled(controller.url) {
+            saveAsWithPanel()
+        } else {
+            controller.save()
+        }
+    }
+
+    /// File ▸ Save As… and the save-error banner's fallback.
+    @discardableResult
+    func saveAsWithPanel() -> Bool {
+        guard controller?.isEditing == true else { return false }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = currentURL?.lastPathComponent ?? "Untitled.md"
+        guard panel.runModal() == .OK, let destination = panel.url else { return false }
+        return saveAs(to: destination)
+    }
 
     @discardableResult
     func saveAs(to destination: URL) -> Bool {
@@ -457,10 +490,46 @@ final class WindowModel {
         guard let controller else { return false }
         return controller.isEditing || (!controller.isLoading && readingSnapshot != nil)
     }
+    enum UnsavedChoice { case saveAs, discard, cancel }
+
+    /// Asked when a close/quit can't save on its own (untitled, conflict,
+    /// write failure). Tests swap in a canned answer.
+    var resolveUnsaved: (_ message: String, _ detail: String) -> UnsavedChoice = { message, detail in
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.informativeText = detail
+        alert.addButton(withTitle: "Save As\u{2026}")
+        let discard = alert.addButton(withTitle: "Discard Changes")
+        discard.hasDestructiveAction = true
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: return .saveAs
+        case .alertSecondButtonReturn: return .discard
+        default: return .cancel
+        }
+    }
+
     func prepareToClose() -> Bool {
-        let allowed = controller?.prepareToLeave() ?? true
-        rememberViewed()
-        return allowed
+        defer { rememberViewed() }
+        guard let controller else { return true }
+        let untitled = DocumentOpener.shared.isUntitled(controller.url)
+        if untitled ? !controller.hasUnsavedEdits : controller.prepareToLeave() { return true }
+        let name = controller.url.lastPathComponent
+        let detail: String
+        if untitled {
+            detail = "This document is in a temporary folder. Save it somewhere to keep your changes."
+        } else if controller.conflictState == .conflictPending {
+            detail = "\(name) changed on disk while you were editing."
+        } else {
+            detail = controller.saveError ?? "Your changes couldn\u{2019}t be saved."
+        }
+        switch resolveUnsaved("Save changes to \(name)?", detail) {
+        case .saveAs: return saveAsWithPanel()
+        case .discard:
+            controller.discardEdits()
+            return true
+        case .cancel: return false
+        }
     }
 
     func copyAsRichText(pasteboard: NSPasteboard = .general) {
@@ -614,14 +683,14 @@ final class WindowModel {
         guard let controller, let url = currentURL,
               let id = controller.visibleBlockID else { return }
         scrollMemory[url.path] = id
-        UserDefaults.standard.set(id, forKey: scrollKey(url))
+        RecentPathDefaults.set(id, for: url.path, in: Self.scrollAnchorsKey)
     }
 
     private func savedAnchor(for url: URL) -> String? {
-        scrollMemory[url.path] ?? UserDefaults.standard.string(forKey: scrollKey(url))
+        scrollMemory[url.path] ?? RecentPathDefaults.value(for: url.path, in: Self.scrollAnchorsKey) as? String
     }
 
-    private func scrollKey(_ url: URL) -> String { "scrollAnchor:\(url.path)" }
+    private static let scrollAnchorsKey = "scrollAnchors"
 }
 
 /// Intercepts close without dropping SwiftUI's existing window delegate.

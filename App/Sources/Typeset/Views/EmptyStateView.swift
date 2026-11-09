@@ -10,8 +10,6 @@ struct EmptyStateView: View {
     @State private var recents = RecentDocumentsStore.shared
     @State private var isTargeted = false
 
-    private var appDelegate: AppDelegate? { NSApp.delegate as? AppDelegate }
-
     var body: some View {
         GeometryReader { geometry in
             if recents.entries.isEmpty {
@@ -57,7 +55,7 @@ struct EmptyStateView: View {
                     .foregroundStyle(theme.textSecondary)
                     .contentTransition(.opacity)
             }
-            Button { appDelegate?.openPanel() } label: {
+            Button { DocumentOpener.shared.openPanel() } label: {
                 HStack(spacing: 8) {
                     Text("Open…").font(.system(size: 13, weight: .medium))
                     Text("⌘O").font(.system(size: 12)).opacity(0.7)

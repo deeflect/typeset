@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The single funnel every "open this file" request goes through — Finder
 /// double-click, the Open panel, the empty-state recents list, and drag-drop.
@@ -37,6 +38,12 @@ final class DocumentOpener {
     private var pending: [URL] = []
     private var drainScheduled = false
     private var waited: TimeInterval = 0
+    private let launched = Date()
+    /// Files written by New from Clipboard: they live in the temporary
+    /// folder, so ⌘S on one goes through the Save panel instead.
+    private var untitledURLs: Set<URL> = []
+
+    func isUntitled(_ url: URL) -> Bool { untitledURLs.contains(url.standardizedFileURL) }
 
     /// How long `drain` waits for the system's window to materialise before
     /// opening one itself. Only ever elapses if that window never arrives.
@@ -111,10 +118,23 @@ final class DocumentOpener {
         }
         do {
             try Data(text.utf8).write(to: url, options: .withoutOverwriting)
+            untitledURLs.insert(url.standardizedFileURL)
             open(url)
         } catch {
             NSSound.beep()
         }
+    }
+
+    /// File ▸ Open… (⌘O) and the empty-state Open… button.
+    func openPanel() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = FolderIndex.markdownExtensions.sorted().compactMap {
+            UTType(filenameExtension: $0)
+        }
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = true
+        guard panel.runModal() == .OK else { return }
+        open(panel.urls)
     }
 
     /// Dock reopen with no windows left: bring the home screen back, or focus
@@ -179,11 +199,13 @@ final class DocumentOpener {
     }
 
     /// Disposes of the window the system opened for a request that turned out
-    /// not to need one — re-opening an already-open file, say. Scoped by time
-    /// so a home-screen window the user deliberately has open is never touched.
+    /// not to need one — re-opening an already-open file, say. Only the
+    /// launch window qualifies, so a home-screen window the user just opened
+    /// (⌘N, Dock reopen) is never touched.
     private func closeSurplusSystemWindows() {
         let cutoff = Date().addingTimeInterval(-Self.systemWindowGrace)
-        for entry in models where entry.registered >= cutoff {
+        let launchCutoff = launched.addingTimeInterval(Self.systemWindowGrace)
+        for entry in models where entry.registered >= cutoff && entry.registered <= launchCutoff {
             guard let model = entry.model, model.currentURL == nil, let window = model.window else { continue }
             window.close()
         }

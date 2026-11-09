@@ -15,13 +15,15 @@ struct TypesetCommands: Commands {
     @FocusedValue(\.windowModel) private var model
     @AppStorage("textScale") private var textScale: Double = 1.0
 
-    /// Bridged from `AppDelegate` (AppKit open panel) since Open is app-level,
-    /// not window-level.
-    let openPanel: () -> Void
+    private static let scaleStep = 0.1
 
-    private let minScale = 0.8
-    private let maxScale = 1.8
-    private let scaleStep = 0.1
+    /// ⌘+/⌘− (and AppDelegate's ⌘= monitor): steps the shared text scale,
+    /// clamped to 0.8–1.8.
+    static func zoom(by step: Double) {
+        let defaults = UserDefaults.standard
+        let current = defaults.object(forKey: "textScale") as? Double ?? 1.0
+        defaults.set(min(1.8, max(0.8, (current + step).roundedToPlaces(2))), forKey: "textScale")
+    }
 
     private var hasDocument: Bool { activeModel?.controller != nil }
 
@@ -43,7 +45,7 @@ struct TypesetCommands: Commands {
         CommandGroup(replacing: .newItem) {
             Button("New from Clipboard") { DocumentOpener.shared.openClipboard() }
                 .keyboardShortcut("n", modifiers: .command)
-            Button("Open…") { openPanel() }
+            Button("Open…") { DocumentOpener.shared.openPanel() }
                 .keyboardShortcut("o", modifiers: .command)
             Button("Open Folder…") { DocumentOpener.shared.openFolderPanel() }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
@@ -57,6 +59,9 @@ struct TypesetCommands: Commands {
             Button("Save") { activeModel?.save() }
                 .keyboardShortcut("s", modifiers: .command)
                 .disabled(!(activeModel?.canSave ?? false))
+            Button("Save As…") { activeModel?.saveAsWithPanel() }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
+                .disabled(activeModel?.controller?.isEditing != true)
             Divider()
             Button("Export as PDF…") { activeModel?.exportPDF() }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
@@ -122,14 +127,10 @@ struct TypesetCommands: Commands {
 
             Button("Actual Size") { textScale = 1.0 }
                 .keyboardShortcut("0", modifiers: .command)
-            Button("Zoom In") {
-                textScale = min(maxScale, (textScale + scaleStep).roundedToPlaces(2))
-            }
-            .keyboardShortcut("+", modifiers: .command)
-            Button("Zoom Out") {
-                textScale = max(minScale, (textScale - scaleStep).roundedToPlaces(2))
-            }
-            .keyboardShortcut("-", modifiers: .command)
+            Button("Zoom In") { Self.zoom(by: Self.scaleStep) }
+                .keyboardShortcut("+", modifiers: .command)
+            Button("Zoom Out") { Self.zoom(by: -Self.scaleStep) }
+                .keyboardShortcut("-", modifiers: .command)
 
             Divider()
 
