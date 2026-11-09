@@ -49,7 +49,7 @@ enum SnapshotRunner {
                     let reader = NativeMarkdownReadingView(document: snapshot, theme: theme, controller: .init())
                     let hosting = NSHostingView(rootView: reader)
                     hosting.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
-                    hosting.frame = NSRect(x: 0, y: 0, width: width, height: 900)
+                    hosting.frame = NSRect(x: 0, y: 0, width: width, height: env["TYPESET_SNAPSHOT_HEIGHT"].flatMap(Double.init) ?? 900)
                     hosting.layoutSubtreeIfNeeded()
                     let layoutMs = milliseconds(since: layoutStart)
                     let rasterStart = DispatchTime.now()

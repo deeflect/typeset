@@ -31,3 +31,6 @@ Tests/Fixtures/generated/
 site/node_modules
 site/dist
 site/.astro
+
+# Tesseract render scratch
+.tesseract-work/
