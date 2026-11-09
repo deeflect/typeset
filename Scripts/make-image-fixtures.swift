@@ -1,7 +1,7 @@
 #!/usr/bin/env swift
 // Generates the M6 Phase 0 image-heavy fixture: ~100 local PNGs + a
 // Markdown file referencing them, for the many-image scroll gate
-// (M6-PLAN.md §6/§7). Run via `swift Scripts/make-image-fixtures.swift`.
+// (docs/archive/M6-PLAN.md §6/§7). Run via `swift Scripts/make-image-fixtures.swift`.
 import AppKit
 import Foundation
 
