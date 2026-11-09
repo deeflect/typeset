@@ -11,6 +11,11 @@ public enum MarkdownParser {
     /// `.mdx` documents get `mdx: true` (see `isMDX`): ESM is dropped, JSX tag lines become
     /// `.htmlBlock`s and container children parse as Markdown.
     public static func parse(_ text: String, mdx: Bool = false) -> [Block] {
+        parseDocument(text, mdx: mdx).blocks
+    }
+
+    /// `parse`, plus the cmark document of the body, so a renderer can reuse it instead of parsing again.
+    public static func parseDocument(_ text: String, mdx: Bool = false) -> (blocks: [Block], document: Document) {
         let text = normalizingLineEndings(text)
         var ordinal = 0
         var blocks: [Block] = []
@@ -21,8 +26,9 @@ public enum MarkdownParser {
             ordinal += 1
         }
 
-        blocks.append(contentsOf: parseBody(body, startOrdinal: ordinal, lineOffset: 0, mdx: mdx))
-        return Block.assigningOccurrenceIndices(to: blocks)
+        let parsed = parseBodyAndDocument(body, startOrdinal: ordinal, lineOffset: 0, mdx: mdx)
+        blocks.append(contentsOf: parsed.blocks)
+        return (Block.assigningOccurrenceIndices(to: blocks), parsed.document)
     }
 
     /// The one place that decides MDX mode: by file extension.
@@ -54,9 +60,13 @@ public enum MarkdownParser {
     /// parse. Shared by `parse(_:)`, the progressive/chunked parser, and
     /// incremental reparse.
     static func parseBody<S: StringProtocol>(_ body: S, startOrdinal: Int, lineOffset: Int, mdx: Bool = false) -> [Block] {
-        // swift-markdown parses against cmark-gfm, which enables the GFM
-        // extensions (tables, task lists, strikethrough, autolinks) by
-        // default — no extra options needed.
+        parseBodyAndDocument(body, startOrdinal: startOrdinal, lineOffset: lineOffset, mdx: mdx).blocks
+    }
+
+    static func parseBodyAndDocument<S: StringProtocol>(_ body: S, startOrdinal: Int, lineOffset: Int, mdx: Bool = false) -> (blocks: [Block], document: Document) {
+        // swift-markdown attaches only the table, strikethrough and task-list
+        // GFM extensions; autolinks (bare URLs, `www.`, emails) are not
+        // parsed and the renderer detects them in text instead.
         let bodyString = String(body)
         let mdxNodes = mdx ? MDXScanner.scan(bodyString) : []
         let document = Document(parsing: bodyForParsing(mdxNodes.isEmpty ? bodyString : MDXScanner.masked(bodyString, nodes: mdxNodes)))
@@ -77,7 +87,7 @@ public enum MarkdownParser {
             blocks.append(Block(kind: kind, rawText: rawText, ordinal: ordinal, startLine: startLine + lineOffset))
             ordinal += 1
         }
-        guard !mdxNodes.isEmpty else { return blocks }
+        guard !mdxNodes.isEmpty else { return (blocks, document) }
 
         // Tag lines are blocks of their own (in line order) so the renderer can record them.
         var tags: [(text: String, line: Int)] = []
@@ -88,13 +98,23 @@ public enum MarkdownParser {
         let merged = (blocks.map { ($0.kind, $0.rawText, $0.startLine) }
                       + tags.map { (BlockKind.htmlBlock, $0.text, $0.line + lineOffset) })
             .sorted { $0.2 < $1.2 }
-        return merged.enumerated().map { Block(kind: $1.0, rawText: $1.1, ordinal: startOrdinal + $0, startLine: $1.2) }
+        return (merged.enumerated().map { Block(kind: $1.0, rawText: $1.1, ordinal: startOrdinal + $0, startLine: $1.2) }, document)
+    }
+
+    /// Byte scan for `[^`; `String.contains` is ~25× slower on large bodies.
+    static func containsFootnoteMarker(_ text: String) -> Bool {
+        var previous: UInt8 = 0
+        for byte in text.utf8 {
+            if byte == UInt8(ascii: "^"), previous == UInt8(ascii: "[") { return true }
+            previous = byte
+        }
+        return false
     }
 
     /// cmark consumes some footnote definitions as link definitions.
     /// Break that syntax only for parsing; block raw text still comes from the original lines.
     public static func bodyForParsing(_ body: String) -> String {
-        guard body.contains("[^") else { return body }
+        guard containsFootnoteMarker(body) else { return body }
         let lines = body.split(separator: "\n", omittingEmptySubsequences: false)
         let candidates = lines.indices.filter {
             lines[$0].range(of: #"^ {0,3}\[\^[^\]\s]+\]:"#, options: .regularExpression) != nil

@@ -9,6 +9,13 @@ struct CheckboxWriteBackTests {
         #expect(result == "# Title\n\n- [x] one\n- [ ] two\n")
     }
 
+    @Test func countsOnlyCmarkLineEndingsAndFlipsOrderedTasks() {
+        // U+2028 is not a line break for cmark: "b" is body line 2, not 3.
+        let text = "Intro\u{2028}more\n\n- [x] a\n1. [x] b\n"
+        #expect(CheckboxWriteBack.flip(fileText: text, blockStartLine: 2, itemLineOffset: 1, checked: false)
+                == "Intro\u{2028}more\n\n- [x] a\n1. [ ] b\n")
+    }
+
     @Test func flipsCheckedToUnchecked() {
         let text = "- [x] done\n"
         let result = CheckboxWriteBack.flip(fileText: text, blockStartLine: 0, itemLineOffset: 0, checked: false)

@@ -3,6 +3,23 @@ import CoreImage
 import ImageIO
 import SwiftUI
 
+/// Image, checkbox and code ranges are location-sorted and disjoint: the first index whose range ends after `location`.
+private func firstIndex<T>(_ items: [T], endingAfter location: Int, range: (T) -> NSRange) -> Int {
+    var low = 0, high = items.count
+    while low < high {
+        let mid = (low + high) / 2
+        if NSMaxRange(range(items[mid])) <= location { low = mid + 1 } else { high = mid }
+    }
+    return low
+}
+
+/// The item whose range holds `index` (binary search; mouse moves hit this per event).
+private func item<T>(_ items: [T]?, at index: Int, range: (T) -> NSRange) -> T? {
+    guard let items else { return nil }
+    let i = firstIndex(items, endingAfter: index, range: range)
+    return i < items.count && NSLocationInRange(index, range(items[i])) ? items[i] : nil
+}
+
 /// TextKit 1 reading surface. The source editor remains a separate text view.
 public struct NativeMarkdownReadingView: NSViewRepresentable {
     public let document: NativeMarkdownDocument
@@ -165,7 +182,9 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
         private var onToggle: ((String) -> Void)?
         private var onCodeCopied: (() -> Void)?
         private var generation = 0
-        private var tasks: [Task<Void, Never>] = []
+        /// In-flight image and highlight loads; each removes itself when done.
+        private var tasks: [Int: Task<Void, Never>] = [:]
+        private var nextTaskID = 0
         private var loadedImageLocations: Set<Int> = []
         private var loadedImages: [Int: NativeMarkdownImages.Decoded] = [:]
         private var loadedCodeLocations: Set<Int> = []
@@ -230,8 +249,14 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
             view.ticks = []
             document = input.document
             updateMarkers()
+            // Loaded images outside the replaced span stay in the text storage; keep them (shifted) so they don't reload and fade in again.
+            var keptImages: [Int: NativeMarkdownImages.Decoded] = [:]
             if let old {
                 let splice = input.document.replacementRanges(from: old)
+                let delta = splice.new.length - splice.old.length
+                for (location, image) in loadedImages where location < splice.old.location || location >= NSMaxRange(splice.old) {
+                    keptImages[location < splice.old.location ? location : location + delta] = image
+                }
                 view.textStorage?.replaceCharacters(in: splice.old,
                     with: input.document.materializedAttributedString(in: splice.new))
             } else {
@@ -252,8 +277,8 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
                     scroll.reflectScrolledClipView(scroll.contentView)
                 }
             }
-            loadedImageLocations.removeAll()
-            loadedImages.removeAll()
+            loadedImages = keptImages
+            loadedImageLocations = Set(keptImages.keys)
             loadedCodeLocations.removeAll()
             highlightIsDark = input.theme.colorScheme == .dark
             scrolled()
@@ -291,14 +316,14 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
                 onToggle?(key)
                 return onToggle != nil
             }
-            if let task = document?.checkboxes.first(where: { NSLocationInRange(index, $0.range) }) {
+            if let task = checkbox(at: index) {
                 onCheckbox?(task.blockStartLine, task.lineOffset, !task.checked)
                 return onCheckbox != nil
             }
             return false
         }
         fileprivate func openImage(at index: Int) -> Bool {
-            if let image = document?.images.first(where: { NSLocationInRange(index, $0.range) }), let url = image.url {
+            if let image = item(document?.images, at: index, range: \.range), let url = image.url {
                 if let actual = loadedImages[image.range.location]?.image {
                     onImageOpen?(actual)
                 } else if url.isFileURL, FolderAccessStore.isAccessDenied(at: url) {
@@ -313,7 +338,7 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
         fileprivate var isInteractive: Bool { onCodeCopied != nil }
         fileprivate var canToggleTasks: Bool { onCheckbox != nil }
         fileprivate func checkbox(at index: Int) -> NativeMarkdownDocument.Checkbox? {
-            document?.checkboxes.first(where: { NSLocationInRange(index, $0.range) })
+            item(document?.checkboxes, at: index, range: \.range)
         }
         fileprivate func isActionable(at index: Int) -> Bool {
             guard let view, index < (view.textStorage?.length ?? 0) else { return false }
@@ -325,7 +350,7 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
         }
         /// R06: a loaded image zooms (lightbox), a blocked card asks for access; other cards are inert.
         fileprivate func imageCursor(at index: Int) -> NSCursor? {
-            guard let image = document?.images.first(where: { NSLocationInRange(index, $0.range) }) else { return nil }
+            guard let image = item(document?.images, at: index, range: \.range) else { return nil }
             if loadedImages[image.range.location]?.image != nil { return .zoomIn }
             let cell = (view?.textStorage?.attribute(.attachment, at: image.range.location, effectiveRange: nil) as? NSTextAttachment)?.attachmentCell
             return (cell as? ImagePlaceholderCell)?.loadState == .blocked ? .pointingHand : nil
@@ -391,11 +416,15 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
             let top = view.characterIndexForInsertion(at: NSPoint(x: view.textContainerInset.width, y: view.visibleRect.minY))
             let bottom = view.characterIndexForInsertion(at: NSPoint(x: view.textContainerInset.width, y: view.visibleRect.maxY + view.visibleRect.height))
             let current = generation
-            for image in images {
+            for image in images[firstIndex(images, endingAfter: top, range: \.range)...] {
+                guard image.range.location <= bottom else { break }
                 guard let url = image.url, url.isFileURL else { continue } // Documents never fetch network images.
                 let range = image.range
-                guard range.location >= top, range.location <= bottom, loadedImageLocations.insert(range.location).inserted else { continue }
-                let task = Task { [weak self] in
+                guard loadedImageLocations.insert(range.location).inserted else { continue }
+                let id = nextTaskID
+                nextTaskID += 1
+                tasks[id] = Task { [weak self] in
+                    defer { self?.tasks[id] = nil }
                     let decoded = await NativeMarkdownImages.load(url)
                     guard let self, self.generation == current, let view = self.view,
                           range.location < (view.textStorage?.length ?? 0) else { return }
@@ -424,7 +453,6 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
                         }
                     }
                 }
-                tasks.append(task)
             }
         }
 
@@ -434,11 +462,14 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
             let bottom = view.characterIndexForInsertion(at: NSPoint(x: view.textContainerInset.width, y: view.visibleRect.maxY + view.visibleRect.height))
             let current = generation
             let isDark = highlightIsDark
-            for code in ranges where code.language != nil {
-                guard code.range.location + code.range.length >= top,
-                      code.range.location <= bottom,
-                      loadedCodeLocations.insert(code.range.location).inserted else { continue }
-                let task = Task { [weak self] in
+            for code in ranges[firstIndex(ranges, endingAfter: top - 1, range: \.range)...] {
+                guard code.range.location <= bottom else { break }
+                guard code.language != nil else { continue }
+                guard loadedCodeLocations.insert(code.range.location).inserted else { continue }
+                let id = nextTaskID
+                nextTaskID += 1
+                tasks[id] = Task { [weak self] in
+                    defer { self?.tasks[id] = nil }
                     guard let ns = await CodeHighlighter.shared.highlightedNative(code: code.code, language: code.language, isDark: isDark) else { return }
                     guard let self, self.generation == current, let storage = self.view?.textStorage,
                           code.range.location + code.range.length <= storage.length, ns.length == code.range.length else { return }
@@ -446,13 +477,12 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
                         if let value { storage.addAttribute(.foregroundColor, value: value, range: NSRange(location: code.range.location + range.location, length: range.length)) }
                     }
                 }
-                tasks.append(task)
             }
         }
 
         private func cancelImages() {
             generation += 1
-            tasks.forEach { $0.cancel() }
+            tasks.values.forEach { $0.cancel() }
             tasks.removeAll()
         }
         @objc private func resized() {

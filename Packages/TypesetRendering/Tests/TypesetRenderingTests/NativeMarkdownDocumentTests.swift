@@ -302,18 +302,24 @@ extension NativeMarkdownDocumentTests {
         guard ProcessInfo.processInfo.environment["TYPESET_NATIVE_BENCH"] == "1" else { throw XCTSkip("one-shot benchmark") }
         let section = "# Heading\nParagraph with **bold**, [link](https://example.com), and `code`.\n\n| Left | Right |\n| :--- | ---: |\n| A | 42 |\n\n"
         let prose = "# Heading\nParagraph with **bold**, *italic*, and [link](https://example.com). This is normal wrapped prose in a reading document.\n\n"
-        for (kind, source) in [
+        // TYPESET_NATIVE_BENCH_FILES=a.md:b.md benchmarks those files instead (thread CPU time too).
+        let files = ProcessInfo.processInfo.environment["TYPESET_NATIVE_BENCH_FILES"]?.split(separator: ":").map(String.init) ?? []
+        let cases = files.isEmpty ? [
             ("tables-small", String(repeating: section, count: 100)),
             ("tables-large", String(repeating: section, count: 10000)),
             ("prose-50k", String(repeating: prose, count: 500)),
             ("prose-1m", String(repeating: prose, count: 10000))
-        ] {
+        ] : try files.map { (URL(fileURLWithPath: $0).lastPathComponent, try String(contentsOfFile: $0, encoding: .utf8)) }
+        func cpu() -> Double { var t = timespec(); clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t); return Double(t.tv_sec) + Double(t.tv_nsec) / 1e9 }
+        for (kind, source) in cases {
+            let cpuStart = cpu()
             let start = CFAbsoluteTimeGetCurrent()
-            let blocks = MarkdownParser.parse(source)
+            let (blocks, parsedDocument) = MarkdownParser.parseDocument(source)
             let parsed = CFAbsoluteTimeGetCurrent()
             let theme = Theme(colorScheme: .light, scale: 1)
-            let first = NativeMarkdownDocument.build(source: source, blocks: blocks, theme: theme, documentURL: nil)
+            let first = NativeMarkdownDocument.build(source: source, blocks: blocks, document: parsedDocument, theme: theme, documentURL: nil)
             let built = CFAbsoluteTimeGetCurrent()
+            let cpuBuilt = cpu()
             let storage = NSTextStorage(attributedString: first.attributedString)
             let installed = CFAbsoluteTimeGetCurrent()
             let layout = NSLayoutManager()
@@ -325,12 +331,12 @@ extension NativeMarkdownDocumentTests {
             _ = layout.boundingRect(forGlyphRange: glyphs, in: container)
             let visible = CFAbsoluteTimeGetCurrent()
             let updated = source + "Tail\n"
-            let changed = NativeMarkdownDocument.build(source: updated, blocks: MarkdownParser.parse(updated), theme: theme, documentURL: nil)
+            let reparsed = MarkdownParser.parseDocument(updated); let changed = NativeMarkdownDocument.build(source: updated, blocks: reparsed.blocks, document: reparsed.document, theme: theme, documentURL: nil)
             let rebuilt = CFAbsoluteTimeGetCurrent()
             let splice = changed.replacementRanges(from: first)
             storage.replaceCharacters(in: splice.old, with: changed.attributedString.attributedSubstring(from: splice.new))
             let reinstalled = CFAbsoluteTimeGetCurrent()
-            print("NATIVE_BENCH kind=\(kind) bytes=\(source.utf8.count) parse_ms=\(Int((parsed-start)*1000)) build_ms=\(Int((built-parsed)*1000)) install_ms=\(Int((installed-built)*1000)) visible_ms=\(Int((visible-installed)*1000)) reload_build_ms=\(Int((rebuilt-visible)*1000)) reload_install_ms=\(Int((reinstalled-rebuilt)*1000))")
+            print("NATIVE_BENCH kind=\(kind) bytes=\(source.utf8.count) parse_ms=\(Int((parsed-start)*1000)) build_ms=\(Int((built-parsed)*1000)) install_ms=\(Int((installed-built)*1000)) visible_ms=\(Int((visible-installed)*1000)) reload_build_ms=\(Int((rebuilt-visible)*1000)) reload_install_ms=\(Int((reinstalled-rebuilt)*1000)) parse_build_cpu_ms=\(Int((cpuBuilt-cpuStart)*1000))")
         }
     }
 }
@@ -971,5 +977,75 @@ extension NativeMarkdownDocumentTests {
         XCTAssertEqual(doc.block(at: 0)?.id, blocks[1].id)
         let edited = render(source.replacingOccurrences(of: "Body", with: "Bodies"))
         XCTAssertEqual(edited.replacementRanges(from: doc).old, NSRange(location: 0, length: 11))
+    }
+
+    @MainActor func testBareURLsWWWAndEmailsBecomeLinks() {
+        let doc = render("See https://example.com/a. Or (www.example.org), mail dee@example.com, `https://code.example` too.\n")
+        let text = doc.attributedString, plain = text.string as NSString
+        func link(_ needle: String) -> URL? { text.attribute(.link, at: plain.range(of: needle).location, effectiveRange: nil) as? URL }
+        XCTAssertEqual(link("https://example.com")?.absoluteString, "https://example.com/a")
+        XCTAssertNil(text.attribute(.link, at: plain.range(of: "/a.").location + 2, effectiveRange: nil), "trailing period stays text")
+        XCTAssertEqual(link("www.")?.absoluteString, "https://www.example.org")
+        XCTAssertNil(text.attribute(.link, at: plain.range(of: "),").location, effectiveRange: nil))
+        XCTAssertEqual(link("dee@")?.absoluteString, "mailto:dee@example.com")
+        XCTAssertNil(link("code.example"), "code spans stay literal")
+        for url in [link("https://example.com")!, link("www.")!, link("dee@")!] {
+            var opened = false
+            _ = NativeMarkdownReadingView.Coordinator.handleLink(url, onLink: nil) { _ in opened = true; return true }
+            XCTAssertTrue(opened, url.absoluteString)
+        }
+    }
+
+    func testBadgeRowsArePillsButALoneWebImageKeepsItsCard() {
+        let doc = render("""
+        [![CI](https://ci.example/badge.svg)](https://ci.example) [![npm](https://npm.example/v.svg)](https://npm.example)
+
+        Text ![](https://shields.example/x.svg)
+
+        <p><a href="https://site.example"><img src="https://img.example/b.svg" alt="B"></a></p>
+
+        ![Hero](https://cdn.example/hero.png)
+        """)
+        let text = doc.attributedString, plain = text.string as NSString
+        XCTAssertEqual(doc.images.map(\.alt), ["Hero"])
+        XCTAssertEqual((text.attribute(.link, at: plain.range(of: "CI").location, effectiveRange: nil) as? URL)?.host, "ci.example")
+        XCTAssertNotNil(text.attribute(.backgroundColor, at: plain.range(of: "npm").location, effectiveRange: nil))
+        XCTAssertEqual((text.attribute(.link, at: plain.range(of: "shields.example").location, effectiveRange: nil) as? URL)?.host, "shields.example")
+        XCTAssertEqual((text.attribute(.link, at: plain.range(of: "B\n").location, effectiveRange: nil) as? URL)?.host, "site.example")
+    }
+
+    func testSoftBreakAfterBRDoesNotIndentNextLine() {
+        XCTAssertEqual(render("foo<br>\nbar\n").attributedString.string, "foo\nbar\n")
+    }
+
+    func testSummaryChevronKeepsImageRangesOnTheImage() {
+        let doc = render("<details>\n<summary><img src=\"a.png\"> Title</summary>\n\nBody\n\n</details>\n")
+        let text = doc.attributedString
+        XCTAssertEqual(doc.images.count, 1)
+        let location = doc.images[0].range.location
+        XCTAssertGreaterThan(location, 0, "slot 0 is the chevron")
+        XCTAssertNil(text.attribute(.typesetChevronOpen, at: location, effectiveRange: nil))
+        XCTAssertNotNil(text.attribute(.typesetChevronOpen, at: 0, effectiveRange: nil))
+    }
+
+    func testH6ContrastAndExpandedMetadataHasNoMoreCount() {
+        let doc = render("###### Small\n")
+        XCTAssertEqual(doc.attributedString.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor, .secondaryLabelColor)
+        let source = "---\ndate: 2024-01-02\nlayout: post\nslug: a\n---\nBody\n"
+        let theme = Theme(colorScheme: .light, scale: 1)
+        let open = NativeMarkdownDocument.build(source: source, blocks: MarkdownParser.parse(source), theme: theme, documentURL: nil, expanded: ["metadata"])
+        let closed = NativeMarkdownDocument.build(source: source, blocks: MarkdownParser.parse(source), theme: theme, documentURL: nil, expanded: [])
+        XCTAssertFalse(open.attributedString.string.contains("more"), open.attributedString.string)
+        XCTAssertTrue(closed.attributedString.string.contains("2 more"), closed.attributedString.string)
+    }
+
+    func testSingleParseDocumentRendersLikeTheParsingBuild() {
+        let source = "---\ntitle: T\n---\n# H\n\nText[^1] with **bold** and [ref].\n\n[^1]: Note\n[ref]: https://example.com\n"
+        let theme = Theme(colorScheme: .light, scale: 1)
+        let parsed = MarkdownParser.parseDocument(source)
+        let reused = NativeMarkdownDocument.build(source: source, blocks: parsed.blocks, document: parsed.document, theme: theme, documentURL: nil)
+        let fresh = NativeMarkdownDocument.build(source: source, blocks: MarkdownParser.parse(source), theme: theme, documentURL: nil)
+        XCTAssertEqual(reused.attributedString.string, fresh.attributedString.string) // attachments are distinct instances, so compare text
+        XCTAssertEqual(reused.blockRanges.map(\.id), fresh.blockRanges.map(\.id))
     }
 }

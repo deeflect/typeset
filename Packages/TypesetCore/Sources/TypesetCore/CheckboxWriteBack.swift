@@ -24,12 +24,14 @@ public enum CheckboxWriteBack {
 
         let normalized = MarkdownParser.normalizingLineEndings(fileText)
         let lineIndex = MarkdownParser.bodyLineOffset(in: normalized) + blockStartLine + itemLineOffset
+        // Only cmark's line endings; `Character.isNewline` also counts U+2028, U+0085, VT and FF.
+        func isLineEnd(_ c: Character) -> Bool { c == "\n" || c == "\r\n" || c == "\r" }
         var start = fileText.startIndex
         for _ in 0..<lineIndex {
-            guard let newline = fileText[start...].firstIndex(where: \.isNewline) else { return nil }
+            guard let newline = fileText[start...].firstIndex(where: isLineEnd) else { return nil }
             start = fileText.index(after: newline)
         }
-        let end = fileText[start...].firstIndex(where: \.isNewline) ?? fileText.endIndex
+        let end = fileText[start...].firstIndex(where: isLineEnd) ?? fileText.endIndex
         let original = String(fileText[start..<end])
         let bom = original.hasPrefix("\u{FEFF}") ? "\u{FEFF}" : ""
         guard let flipped = flippedLine(String(original.dropFirst(bom.count)), checked: checked) else { return nil }
@@ -39,14 +41,14 @@ public enum CheckboxWriteBack {
     }
 
     /// Matches a task-list item marker at the start of a line (after
-    /// optional leading indentation): a `-`/`*`/`+` bullet, one space,
+    /// optional leading indentation): a `-`/`*`/`+` bullet or `1.`/`1)` number, whitespace,
     /// then `[ ]` or `[x]`/`[X]`. Group 1 is everything up to and
     /// including the opening `[`, group 2 is the state character, group 3
     /// is the closing `]` and everything after — reconstructing the line
     /// from those three groups with only the state character replaced
     /// preserves the rest of the line byte-for-byte.
     private static let markerPattern = try! NSRegularExpression(
-        pattern: #"^(\s*[-*+]\s\[)([ xX])(\].*)$"#)
+        pattern: #"^(\s*(?:[-*+]|\d{1,9}[.)])\s+\[)([ xX])(\].*)$"#)
 
     private static func flippedLine(_ line: String, checked: Bool) -> String? {
         let range = NSRange(line.startIndex..., in: line)

@@ -74,25 +74,27 @@ public struct NativeMarkdownDocument: @unchecked Sendable {
     /// Parse once as a complete document so reference definitions resolve in every block.
     /// `expanded` holds the reader's toggled sections (`metadata`, `metadata-all`, `mdx-imports`,
     /// `details:<summary>`); nil renders statically (Quick Look, export): no toggles, every `<details>` open.
-    public static func build(source: String, blocks: [Block], theme: Theme, documentURL: URL?, metadataExpanded: Bool = true, expanded: Set<String>? = nil) -> Self {
-        make(source: source, blocks: blocks, theme: theme, documentURL: documentURL, metadataExpanded: metadataExpanded, expanded: expanded, cancellable: false)!
+    /// `document`: the body document from `MarkdownParser.parseDocument(source, mdx: isMDX(documentURL))`
+    /// for the same source, which skips a second full parse; nil parses here.
+    public static func build(source: String, blocks: [Block], document: Markdown.Document? = nil, theme: Theme, documentURL: URL?, metadataExpanded: Bool = true, expanded: Set<String>? = nil) -> Self {
+        make(source: source, blocks: blocks, document: document, theme: theme, documentURL: documentURL, metadataExpanded: metadataExpanded, expanded: expanded, cancellable: false)!
     }
 
     /// Use from a detached reload task; cancelled work never returns a partial document.
-    public static func buildCancellable(source: String, blocks: [Block], theme: Theme, documentURL: URL?, metadataExpanded: Bool = true, expanded: Set<String>? = nil) throws -> Self {
-        guard let result = make(source: source, blocks: blocks, theme: theme, documentURL: documentURL, metadataExpanded: metadataExpanded, expanded: expanded, cancellable: true) else {
+    public static func buildCancellable(source: String, blocks: [Block], document: Markdown.Document? = nil, theme: Theme, documentURL: URL?, metadataExpanded: Bool = true, expanded: Set<String>? = nil) throws -> Self {
+        guard let result = make(source: source, blocks: blocks, document: document, theme: theme, documentURL: documentURL, metadataExpanded: metadataExpanded, expanded: expanded, cancellable: true) else {
             throw CancellationError()
         }
         return result
     }
 
-    private static func make(source: String, blocks: [Block], theme: Theme, documentURL: URL?, metadataExpanded: Bool, expanded: Set<String>?, cancellable: Bool) -> Self? {
+    private static func make(source: String, blocks: [Block], document parsed: Markdown.Document?, theme: Theme, documentURL: URL?, metadataExpanded: Bool, expanded: Set<String>?, cancellable: Bool) -> Self? {
         if cancellable && Task<Never, Never>.isCancelled { return nil }
         var writer = Writer(theme: theme, documentURL: documentURL)
         writer.expanded = expanded
-        let normalized = source.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        let normalized = source.utf8.contains(UInt8(ascii: "\r")) ? source.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n") : source
         let lineOffset = MarkdownParser.bodyLineOffset(in: normalized)
-        let body = normalized.split(separator: "\n", omittingEmptySubsequences: false).dropFirst(lineOffset).joined(separator: "\n")
+        let body = lineOffset == 0 ? normalized : normalized.split(separator: "\n", omittingEmptySubsequences: false).dropFirst(lineOffset).joined(separator: "\n")
         if lineOffset > 0 {
             let metadata = normalized.split(separator: "\n", omittingEmptySubsequences: false).prefix(lineOffset).dropFirst().dropLast().joined(separator: "\n")
             if let block = blocks.first, block.kind == .frontmatter {
@@ -114,7 +116,7 @@ public struct NativeMarkdownDocument: @unchecked Sendable {
         var nextTag = 0
         let esm = mdxNodes.filter { $0.kind == .esm }
         if !esm.isEmpty { writer.renderMDXImports(esm) }
-        let document = Document(parsing: MarkdownParser.bodyForParsing(mdxNodes.isEmpty ? body : MDXScanner.masked(body, nodes: mdxNodes)))
+        let document = parsed ?? Document(parsing: MarkdownParser.bodyForParsing(mdxNodes.isEmpty ? body : MDXScanner.masked(body, nodes: mdxNodes)))
         if cancellable && Task<Never, Never>.isCancelled { return nil }
         let byLine = Dictionary(uniqueKeysWithValues: blocks.filter { $0.startLine >= 0 }.map { ($0.startLine, $0) })
         func renderTags(before line: Int) {
@@ -127,7 +129,7 @@ public struct NativeMarkdownDocument: @unchecked Sendable {
             }
         }
         // Escapes and entities can decode into `[^` even when the raw source has no literal marker.
-        if body.contains("^") || body.contains("&") { writer.numberFootnotes(in: document) }
+        if body.utf8.contains(where: { $0 == UInt8(ascii: "^") || $0 == UInt8(ascii: "&") }) { writer.numberFootnotes(in: document) }
         for (index, child) in document.children.enumerated() {
             if cancellable && index.isMultiple(of: 32) && Task<Never, Never>.isCancelled { return nil }
             let startLine = (child.range?.lowerBound.line ?? 1) - 1
@@ -218,8 +220,37 @@ private struct Writer {
     var openTags: [(name: String, start: Int, link: URL?)] = []
     let footnoteRef = #/\[\^([^\]\s]+)\]/#
     let footnoteDefinitionPattern = #/\[\^([^\]\s]+)\]:[ \t]*/#
-    var bodyFont: NSFont { .systemFont(ofSize: theme.bodySize * theme.scale) }
+    // Fonts are made once per build: font creation per node was a measurable share of large builds.
+    let bodyFont: NSFont
+    let headingFonts: [NSFont]
+    let codeFont: NSFont
+    /// `adding(_:)` results, keyed by base font and added traits.
+    var traitFonts: [TraitFont: NSFont] = [:]
+    struct TraitFont: Hashable { let font: NSFont, traits: UInt32 }
+    var plainAttributes: [PlainKey: [NSAttributedString.Key: Any]] = [:]
+    struct PlainKey: Hashable { let font: NSFont, color: NSColor }
     var secondary: NSColor { .secondaryLabelColor }
+
+    init(theme: Theme, documentURL: URL?) {
+        self.theme = theme
+        self.documentURL = documentURL
+        bodyFont = .systemFont(ofSize: theme.bodySize * theme.scale)
+        headingFonts = Self.headingSpecs.map { .systemFont(ofSize: $0.0 * theme.scale, weight: .semibold) }
+        codeFont = .monospacedSystemFont(ofSize: 13.5 * theme.scale, weight: .regular)
+    }
+
+    /// Heading size, line height, space above, space below, tracking (em), H1…H6.
+    static let headingSpecs: [(CGFloat, CGFloat, CGFloat, CGFloat, CGFloat)] = [
+        (32, 38, 0, 20, -0.02), (22, 28, 16, 16, -0.01), (18, 24, 8, 16, 0),
+        (16, 24, 8, 12, 0), (14, 20, 8, 12, 0), (13, 18, 8, 12, 0)]
+
+    mutating func font(_ font: NSFont, adding trait: NSFontDescriptor.SymbolicTraits) -> NSFont {
+        let key = TraitFont(font: font, traits: trait.rawValue)
+        if let cached = traitFonts[key] { return cached }
+        let made = font.adding(trait)
+        traitFonts[key] = made
+        return made
+    }
     /// List and nested-block indent step: 16 pt box + 10 pt gap.
     let indentStep: CGFloat = 26
 
@@ -237,6 +268,13 @@ private struct Writer {
     }
 
     mutating func append(_ text: String, font: NSFont, color: NSColor = .labelColor, paragraph: NSParagraphStyle? = nil, extras: [NSAttributedString.Key: Any] = [:]) {
+        if paragraph == nil, extras.isEmpty {
+            let key = PlainKey(font: font, color: color)
+            let attrs = plainAttributes[key] ?? [.font: font, .foregroundColor: color]
+            plainAttributes[key] = attrs
+            output.append(NSAttributedString(string: text, attributes: attrs))
+            return
+        }
         var attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
         if let paragraph { attrs[.paragraphStyle] = paragraph }
         attrs.merge(extras) { _, new in new }
@@ -306,20 +344,17 @@ private struct Writer {
         switch node {
         case let heading as Heading:
             let level = min(max(heading.level, 1), 6)
-            // size, line height, space above, space below, tracking (em)
-            let specs: [(CGFloat, CGFloat, CGFloat, CGFloat, CGFloat)] = [
-                (32, 38, 0, 20, -0.02), (22, 28, 16, 16, -0.01), (18, 24, 8, 16, 0),
-                (16, 24, 8, 12, 0), (14, 20, 8, 12, 0), (13, 18, 8, 12, 0)]
-            let (size, lineHeight, before, after, tracking) = specs[level - 1]
-            let font = NSFont.systemFont(ofSize: size * theme.scale, weight: .semibold)
+            let (size, lineHeight, before, after, tracking) = Self.headingSpecs[level - 1]
+            let font = headingFonts[level - 1]
             let start = output.length
-            renderInline(heading, font: font, color: level < 5 ? .labelColor : (level == 5 ? secondary : .tertiaryLabelColor))
+            // H5/H6 step down to secondary; tertiary was near-invisible on both backgrounds.
+            renderInline(heading, font: font, color: level < 5 ? .labelColor : secondary)
             if tracking != 0, output.length > start {
                 output.addAttribute(.kern, value: size * theme.scale * tracking, range: NSRange(location: start, length: output.length - start))
             }
             endParagraph(from: start, style: style(font, lineHeight: lineHeight, before: before, after: after, indent: indent), font: font)
         case let code as CodeBlock:
-            let mono = NSFont.monospacedSystemFont(ofSize: 13.5 * theme.scale, weight: .regular)
+            let mono = codeFont
             let block = TypesetTextBlock(.code(language: code.language), color: NSColor(theme.codeCardFill), scale: theme.scale)
             block.setWidth(theme.scaled(indent), type: .absoluteValueType, for: .margin, edge: .minX)
             let p = style(mono, lineHeight: 21, after: 0)
@@ -428,6 +463,21 @@ private struct Writer {
         let total = weights.reduce(0, +)
         let headFont = NSFont.systemFont(ofSize: 14 * theme.scale, weight: .semibold)
         let cellFont = NSFont.systemFont(ofSize: 14 * theme.scale)
+        let headRule = NSColor(theme.tableHeaderRule), stroke = NSColor(theme.tableStroke)
+        // One base style per (header?, column); each cell copies it only to set its own text block.
+        let bases = [headFont, cellFont].map { font in
+            (0..<columns).map { column -> NSParagraphStyle in
+                let p = style(font, lineHeight: 20, after: 0)
+                if column < table.columnAlignments.count {
+                    switch table.columnAlignments[column] {
+                    case .some(.center): p.alignment = .center
+                    case .some(.right): p.alignment = .right
+                    default: p.alignment = .left
+                    }
+                }
+                return p
+            }
+        }
         var native = NSTextTable()
         for (rowIndex, row) in rows.enumerated() {
             if rowIndex.isMultiple(of: 200) {
@@ -444,16 +494,9 @@ private struct Writer {
                 block.setWidth(theme.scaled(8), type: .absoluteValueType, for: .padding, edge: .maxY)
                 block.setWidth(theme.scaled(12), type: .absoluteValueType, for: .padding, edge: .maxX)
                 block.setWidth(1, type: .absoluteValueType, for: .border, edge: .maxY)
-                block.setBorderColor(NSColor(rowIndex == 0 ? theme.tableHeaderRule : theme.tableStroke), for: .maxY)
-                let p = style(font, lineHeight: 20, after: 0)
+                block.setBorderColor(rowIndex == 0 ? headRule : stroke, for: .maxY)
+                let p = bases[rowIndex == 0 ? 0 : 1][min(column, columns - 1)].mutableCopy() as! NSMutableParagraphStyle
                 p.textBlocks = [block]
-                if column < table.columnAlignments.count {
-                    switch table.columnAlignments[column] {
-                    case .some(.center): p.alignment = .center
-                    case .some(.right): p.alignment = .right
-                    default: p.alignment = .left
-                    }
-                }
                 let cellStart = output.length
                 renderInline(cell, font: font)
                 if output.length == cellStart { append(" ", font: font) }
@@ -472,6 +515,7 @@ private struct Writer {
         if let text = node as? Markdown.Text {
             let start = output.length
             append(text.string, font: font, color: color, extras: link.map { [.link: $0] } ?? [:])
+            if link == nil, Self.mayContainAutolink(text.string) { linkBareURLs(in: text.string, at: start) }
             if mdx { renderMDXExpressions(in: text.string, at: start, font: font) }
             return
         }
@@ -484,19 +528,24 @@ private struct Writer {
             padChip(NSRange(location: start, length: output.length - start))
             return
         }
-        if node is SoftBreak { append(" ", font: font, color: color); return }
+        if node is SoftBreak {
+            // After `<br>` the line already broke; a space would indent the next line.
+            if output.length == 0 || output.mutableString.character(at: output.length - 1) != 10 { append(" ", font: font, color: color) }
+            return
+        }
         if node is LineBreak { append("\n", font: font, color: color); return }
         if let html = node as? InlineHTML {
             if !renderTag(html.rawHTML, font: font, color: color, link: link) { append(html.rawHTML, font: font, color: secondary) }
             return
         }
         if let image = node as? Markdown.Image {
-            appendImage(source: image.source, alt: image.children.compactMap { ($0 as? Markdown.Text)?.string }.joined(), font: font, link: link)
+            appendImage(source: image.source, alt: image.children.compactMap { ($0 as? Markdown.Text)?.string }.joined(), font: font, link: link,
+                        inline: link != nil || !Self.standsAlone(image))
             return
         }
         var childFont = font
-        if node is Strong { childFont = font.adding(.bold) }
-        if node is Emphasis { childFont = font.adding(.italic) }
+        if node is Strong { childFont = self.font(font, adding: .bold) }
+        if node is Emphasis { childFont = self.font(font, adding: .italic) }
         let childLink = (node as? Markdown.Link).flatMap { resolvedURL($0.destination) } ?? link
         let start = output.length
         for child in node.children {
@@ -682,7 +731,8 @@ private struct Writer {
                 }
             }
             let more = entries.filter { !shown.contains($0.key.lowercased()) }.count
-            if more > 0 { items.append(.text("\(more) more", small, secondary)) }
+            // Expanded, every field is listed below.
+            if more > 0, !open { items.append(.text("\(more) more", small, secondary)) }
             if items.isEmpty { items.append(.text("Metadata", small, secondary)) }
             for (i, item) in items.enumerated() {
                 if i > 0 { space(8, font: small); append("\u{00B7}", font: small, color: .tertiaryLabelColor); space(8, font: small) }
@@ -807,14 +857,63 @@ private struct Writer {
         return nil
     }
 
-    mutating func appendImage(source: String?, alt: String, font: NSFont, link: URL?) {
+    /// `inline`: the image sits in a link or shares its paragraph (README badge rows). A web image there
+    /// is a pill like the frontmatter tags (alt, else host) carrying the link, not a 160 pt card.
+    mutating func appendImage(source: String?, alt: String, font: NSFont, link: URL?, inline: Bool = false) {
         let url = resolvedURL(source)
         let start = output.length
+        if inline, let url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+            append(alt.isEmpty ? (url.host ?? url.absoluteString) : alt, font: .systemFont(ofSize: 12 * theme.scale), color: secondary,
+                   extras: [.backgroundColor: NSColor(theme.codeCardFill), .link: link ?? url])
+            padChip(NSRange(location: start, length: output.length - start))
+            return
+        }
         let attachment = NSTextAttachment()
         var extras: [NSAttributedString.Key: Any] = [.attachment: attachment]
         if let link { extras[.link] = link }
         append("\u{FFFC}", font: font, color: secondary, extras: extras)
         images.append(.init(range: NSRange(location: start, length: output.length - start), url: url, alt: alt))
+    }
+
+    /// Nothing but whitespace beside the image in its paragraph (or other container).
+    static func standsAlone(_ image: Markdown.Image) -> Bool {
+        guard let parent = image.parent else { return true }
+        return parent.children.allSatisfy { child in
+            child.indexInParent == image.indexInParent || child is SoftBreak || child is LineBreak
+                || (child as? Markdown.Text)?.string.allSatisfy(\.isWhitespace) == true
+        }
+    }
+
+    static let linkDetector = try! NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+
+    /// Cheap byte pre-check before running the detector: `://`, `www.` or `@`.
+    static func mayContainAutolink(_ text: String) -> Bool {
+        var window: UInt32 = 0
+        for byte in text.utf8 {
+            if byte == UInt8(ascii: "@") { return true }
+            window = window << 8 | UInt32(byte)
+            if window & 0xFFFFFF == 0x3A2F2F || window == 0x7777772E { return true } // "://", "www."
+        }
+        return false
+    }
+
+    /// GFM autolinks in plain text just appended at `start` (swift-markdown doesn't enable that extension):
+    /// `http(s)://…`, `www.…` (as https) and emails (as mailto), the schemes the reader opens.
+    mutating func linkBareURLs(in text: String, at start: Int) {
+        let ns = text as NSString
+        for match in Self.linkDetector.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            guard var url = match.url else { continue }
+            let literal = ns.substring(with: match.range)
+            let lower = literal.lowercased()
+            if lower.hasPrefix("www.") {
+                guard let https = URL(string: "https://" + literal) else { continue }
+                url = https
+            } else if !(lower.hasPrefix("http://") || lower.hasPrefix("https://") || url.scheme == "mailto") {
+                continue
+            }
+            output.addAttributes([.link: url, .foregroundColor: NSColor(theme.linkColor)],
+                                 range: NSRange(location: start + match.range.location, length: match.range.length))
+        }
     }
 
     /// Chips (inline code, keycaps) get 5 pt of side padding as kerning, so the drawn fill never covers neighbours.
@@ -999,7 +1098,11 @@ private struct Writer {
         switch tag.name {
         case "br": if !tag.closing { append("\n", font: font, color: color) }
         case "img":
-            if !tag.closing { appendImage(source: Self.attribute("src", in: tag.attributes), alt: Self.attribute("alt", in: tag.attributes) ?? "", font: font, link: link) }
+            if !tag.closing {
+                let anchor = openTags.last { $0.name == "a" }
+                appendImage(source: Self.attribute("src", in: tag.attributes), alt: Self.attribute("alt", in: tag.attributes) ?? "", font: font,
+                            link: link ?? anchor?.link, inline: link != nil || anchor != nil)
+            }
         default:
             if !tag.closing { openTags.append((tag.name, output.length, Self.attribute("href", in: tag.attributes).flatMap(resolvedURL))); break }
             guard let index = openTags.lastIndex(where: { $0.name == tag.name }) else { break }
@@ -1079,6 +1182,14 @@ private struct Writer {
                 let chevron = output.attributedSubstring(from: NSRange(location: labelEnd, length: output.length - labelEnd))
                 output.deleteCharacters(in: NSRange(location: labelEnd, length: output.length - labelEnd))
                 output.insert(chevron, at: from)
+                // The label's images and open tags moved right by the chevron.
+                var i = images.count - 1
+                while i >= 0, images[i].range.location >= from {
+                    let image = images[i]
+                    images[i] = .init(range: NSRange(location: image.range.location + chevron.length, length: image.range.length), url: image.url, alt: image.alt)
+                    i -= 1
+                }
+                openTags = openTags.map { $0.start >= from ? ($0.name, $0.start + chevron.length, $0.link) : $0 }
                 if expanded != nil { output.addAttribute(.typesetMetadata, value: key, range: NSRange(location: from, length: output.length - from)) }
                 endParagraph(from: from, style: style(font, lineHeight: 26, after: collapsed ? 16 : 6, indent: indent + 4), font: font)
                 start = output.length
