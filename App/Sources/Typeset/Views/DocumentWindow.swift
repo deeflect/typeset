@@ -162,7 +162,7 @@ struct DocumentWindow: View {
                 } else if let snapshot = model.readingSnapshot {
                     NativeMarkdownReadingView(
                         document: snapshot, theme: theme, controller: model.nativeReader,
-                        onCheckbox: { controller.toggleCheckbox(blockStartLine: $0, itemLineOffset: $1, checked: $2) },
+                        onCheckbox: { model.toggleCheckbox(blockStartLine: $0, itemLineOffset: $1, checked: $2) },
                         onLink: { model.openReadingLink($0) },
                         onImageAccess: { folder in
                             if FolderAccessStore.shared.requestAccess(
@@ -200,7 +200,7 @@ struct DocumentWindow: View {
                 }
             } else if let saveError = controller.saveError {
                 InlineBanner(tone: .warn, symbol: "exclamationmark.triangle.fill", title: saveError) {
-                    Button("Save As\u{2026}") { saveAs() }
+                    Button("Save As\u{2026}") { model.saveAsWithPanel() }
                     Button("Close") { controller.saveError = nil }
                 }
             } else if controller.isFileRemoved, !model.removedBannerDismissed {
@@ -283,13 +283,6 @@ struct DocumentWindow: View {
             get: { controller.editedText },
             set: { controller.noteEditedTextChanged($0) }
         )
-    }
-
-    private func saveAs() {
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = model.currentURL?.lastPathComponent ?? "Untitled.md"
-        guard panel.runModal() == .OK, let destination = panel.url else { return }
-        model.saveAs(to: destination)
     }
 
     private func signalCopied(_ text: String = "Copied", hold: Double = 1, isUpdate: Bool = false) {

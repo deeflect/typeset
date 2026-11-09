@@ -3,6 +3,13 @@ import XCTest
 
 @MainActor
 final class PreviewViewControllerTests: XCTestCase {
+    func testCappedSourceStopsAtLastLineBreak() {
+        XCTAssertEqual(PreviewViewController.capped("short", limit: 10), "short")
+        let capped = PreviewViewController.capped("line one\nline two\n", limit: 12)
+        XCTAssertTrue(capped.hasPrefix("line one\n\n---"))
+        XCTAssertTrue(capped.contains("first 2 MB"))
+    }
+
     func testFailedPrepareClearsPreviousPreview() async throws {
         let first = FileManager.default.temporaryDirectory.appendingPathComponent("typeset-ql-\(UUID().uuidString).md")
         let invalid = FileManager.default.temporaryDirectory.appendingPathComponent("typeset-ql-\(UUID().uuidString).md")

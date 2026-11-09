@@ -8,6 +8,17 @@ import XCTest
 /// touch bookmark/security-scope APIs (hard to unit test in-process) — see
 /// PLAN §8.
 final class FolderAccessPathingTests: XCTestCase {
+    func testBookmarkToDeletedFileIsMissingAndUnmountedVolumeIsNot() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("typeset-bm-\(UUID().uuidString).md")
+        try Data("x".utf8).write(to: url)
+        let data = try XCTUnwrap(SecurityScopedBookmark.make(url))
+        if case .available = SecurityScopedBookmark.resolve(data, path: url.path) {} else { XCTFail("live file should resolve") }
+        try FileManager.default.removeItem(at: url)
+        if case .missing = SecurityScopedBookmark.resolve(data, path: url.path) {} else { XCTFail("deleted file should be missing") }
+        XCTAssertTrue(SecurityScopedBookmark.isOnUnmountedVolume("/Volumes/NoSuchVolume-\(UUID().uuidString)/a.md"))
+        XCTAssertFalse(SecurityScopedBookmark.isOnUnmountedVolume(url.path))
+    }
+
     func testExactFolderMatchIsContained() {
         XCTAssertTrue(FolderAccessPathing.isPath("/Users/dee/Docs", containedIn: "/Users/dee/Docs"))
     }

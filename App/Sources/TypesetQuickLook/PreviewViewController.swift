@@ -43,7 +43,7 @@ final class PreviewViewController: NSViewController, @MainActor QLPreviewingCont
             ? ColorScheme.dark : .light
         let theme = Theme(colorScheme: appearance, scale: 1)
         let task = Task.detached(priority: .userInitiated) {
-            let source = try String(contentsOf: url, encoding: .utf8)
+            let source = Self.capped(try DocumentFileIO.read(url).text)
             try Task.checkCancellation()
             return try NativeMarkdownDocument.buildCancellable(
                 source: source, blocks: MarkdownParser.parse(source, mdx: MarkdownParser.isMDX(url)), theme: theme, documentURL: url)
@@ -65,6 +65,19 @@ final class PreviewViewController: NSViewController, @MainActor QLPreviewingCont
                 preparePreviewOfFile(at: url) { _ in }
             }
         }
+    }
+
+    /// Quick Look renders at most this much source; past it the preview
+    /// stops at the last line break and says so.
+    nonisolated static let previewLimit = 2 * 1024 * 1024
+
+    nonisolated static func capped(_ text: String, limit: Int = previewLimit) -> String {
+        let utf8 = text.utf8
+        guard utf8.count > limit else { return text }
+        let head = utf8.prefix(limit)
+        let cut = head.lastIndex(of: UInt8(ascii: "\n")).map { head[..<$0] } ?? head
+        return String(decoding: cut, as: UTF8.self)
+            + "\n\n---\n\n*Preview shows the first 2 MB. Open in Typeset for the full file.*\n"
     }
 
     private func install(_ document: NativeMarkdownDocument, theme: Theme) {

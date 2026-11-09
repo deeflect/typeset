@@ -49,3 +49,23 @@ final class LastViewedStore {
         return directory.appendingPathComponent(digest.map { String(format: "%02x", $0) }.joined() + ".json")
     }
 }
+
+/// Small per-path settings (scroll anchor, follow mode) kept as one capped,
+/// newest-first list under a single defaults key, instead of one key per
+/// file ever opened growing the defaults plist forever.
+enum RecentPathDefaults {
+    static let limit = 200
+
+    static func value(for path: String, in key: String, defaults: UserDefaults = .standard) -> Any? {
+        entries(key, defaults).first { $0["p"] as? String == path }?["v"]
+    }
+
+    static func set(_ value: Any, for path: String, in key: String, defaults: UserDefaults = .standard) {
+        let rest = entries(key, defaults).filter { $0["p"] as? String != path }
+        defaults.set(Array(([["p": path, "v": value]] + rest).prefix(limit)), forKey: key)
+    }
+
+    private static func entries(_ key: String, _ defaults: UserDefaults) -> [[String: Any]] {
+        defaults.array(forKey: key) as? [[String: Any]] ?? []
+    }
+}

@@ -232,6 +232,7 @@ final class DocumentLifecycleTests: XCTestCase {
         let first = try file()
         let second = try file("# Second\n")
         let model = WindowModel()
+        model.resolveUnsaved = { _, _ in .cancel }
         model.load(initial: first)
         while model.controller?.isLoading == true { try? await Task.sleep(for: .milliseconds(10)) }
         _ = model.controller?.enterEditMode()
@@ -274,6 +275,7 @@ final class DocumentLifecycleTests: XCTestCase {
             .appendingPathComponent("typeset-saved-copy-\(UUID().uuidString).md")
         addTeardownBlock { try? FileManager.default.removeItem(at: destination) }
         let model = WindowModel()
+        model.resolveUnsaved = { _, _ in .cancel }
         model.load(initial: original)
         while model.controller?.isLoading == true { try? await Task.sleep(for: .milliseconds(10)) }
         _ = model.controller?.enterEditMode()
@@ -379,6 +381,7 @@ final class DocumentLifecycleTests: XCTestCase {
             styleMask: [.titled, .closable], backing: .buffered, defer: false
         )
         model.window = window
+        model.resolveUnsaved = { _, _ in .cancel }
         DocumentOpener.shared.register(model)
         defer {
             DocumentOpener.shared.unregister(model)
@@ -396,6 +399,82 @@ final class DocumentLifecycleTests: XCTestCase {
         XCTAssertTrue(model.controller?.save() == true)
         XCTAssertTrue(window.delegate?.windowShouldClose?(window) ?? false)
         XCTAssertEqual(AppDelegate().applicationShouldTerminate(NSApp), .terminateNow)
+    }
+
+    func testDiscardChoiceLetsUnsaveableDocumentClose() async throws {
+        let url = try file()
+        let model = WindowModel()
+        var asked = 0
+        model.resolveUnsaved = { _, _ in asked += 1; return .discard }
+        model.load(initial: url)
+        while model.controller?.isLoading == true { try? await Task.sleep(for: .milliseconds(10)) }
+        _ = model.controller?.enterEditMode()
+        model.controller?.noteEditedTextChanged("# Local\n")
+        try FileManager.default.removeItem(at: url)
+        XCTAssertTrue(model.prepareToClose())
+        XCTAssertEqual(asked, 1)
+        XCTAssertEqual(model.controller?.conflictState, .clean)
+        XCTAssertEqual(model.controller?.editedText, "# Original\n")
+        model.stop()
+    }
+
+    func testStaleSnapshotCheckboxClickIsDropped() async throws {
+        let url = try file("- [ ] A\n- [ ] B\n")
+        let model = WindowModel()
+        model.load(initial: url)
+        for _ in 0..<300 where model.readingSnapshot == nil { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertNotNil(model.readingSnapshot)
+        model.toggleCheckbox(blockStartLine: 0, itemLineOffset: 0, checked: true)
+        // The snapshot still shows the pre-write text; a second click on it is stale.
+        model.toggleCheckbox(blockStartLine: 0, itemLineOffset: 1, checked: true)
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "- [x] A\n- [ ] B\n")
+        model.stop()
+    }
+
+    func testSiblingFileWriteIsNotAReload() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("typeset-sibling-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("doc.md")
+        try Data("# Doc\n".utf8).write(to: url)
+        let controller = await loaded(url)
+        var reloads = 0
+        controller.onReloadReady = { reloads += 1 }
+        try? await Task.sleep(for: .milliseconds(200))
+        try Data("other".utf8).write(to: folder.appendingPathComponent("sibling.txt"), options: .atomic)
+        try? await Task.sleep(for: .milliseconds(500))
+        XCTAssertEqual(reloads, 0)
+        XCTAssertFalse(controller.hasExternalChanges)
+        controller.onReloadReady = nil
+        controller.stop()
+    }
+
+    func testExternalBufferReplaceClearsEditorUndo() async throws {
+        let handle = SourceEditorHandle()
+        let color = NSColor.labelColor
+        let colors = MarkdownSyntaxStyler.Colors(
+            heading: color, link: color, code: color, codeBackground: color, dim: color)
+        let hosting = NSHostingView(rootView: SourceEditorView(text: .constant("# One\n"), colors: colors, handle: handle))
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = hosting
+        hosting.layoutSubtreeIfNeeded()
+        func textView(in view: NSView) -> NSTextView? {
+            if let text = view as? NSTextView { return text }
+            return view.subviews.lazy.compactMap(textView).first
+        }
+        let editor = try XCTUnwrap(textView(in: hosting))
+        editor.insertText("x", replacementRange: NSRange(location: 0, length: 0))
+        XCTAssertTrue(editor.undoManager?.canUndo == true)
+        hosting.rootView = SourceEditorView(text: .constant("# Two\n"), colors: colors, handle: handle)
+        for _ in 0..<100 where editor.string != "# Two\n" {
+            hosting.layoutSubtreeIfNeeded()
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(editor.string, "# Two\n")
+        XCTAssertFalse(editor.undoManager?.canUndo ?? false)
+        window.contentView = nil
     }
 
     func testWindowSnapshotKeepsTableAndReferenceLinkNavigation() async throws {

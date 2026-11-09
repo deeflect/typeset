@@ -6,9 +6,10 @@ import TypesetCore
 enum AgentQuote {
     static func format(path: String, lines: ClosedRange<Int>, text: String) -> String {
         let span = lines.count == 1 ? "\(lines.lowerBound)" : "\(lines.lowerBound)-\(lines.upperBound)"
+        // `isNewline`, not "\n": a CRLF pair is one Character in Swift.
         var body = text
-        while body.hasSuffix("\n") { body.removeLast() }
-        let quoted = body.split(separator: "\n", omittingEmptySubsequences: false)
+        while body.last?.isNewline == true { body.removeLast() }
+        let quoted = body.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
             .map { $0.isEmpty ? ">" : "> \($0)" }
             .joined(separator: "\n")
         return "`\(path):\(span)`\n\(quoted)"
@@ -30,9 +31,10 @@ enum AgentQuote {
     }
 
     /// Lines in `raw`, ignoring trailing newlines ("" and "a" are both 1).
-    private static func lineCount(_ raw: String) -> Int {
-        var raw = raw
-        while raw.hasSuffix("\n") { raw.removeLast() }
-        return raw.reduce(1) { $1 == "\n" ? $0 + 1 : $0 }
+    /// Counts scalars, so CRLF (one Character) still counts as a line break.
+    static func lineCount(_ raw: String) -> Int {
+        var scalars = raw.unicodeScalars[...]
+        while let last = scalars.last, last == "\n" || last == "\r" { scalars = scalars.dropLast() }
+        return scalars.reduce(1) { $1 == "\n" ? $0 + 1 : $0 }
     }
 }

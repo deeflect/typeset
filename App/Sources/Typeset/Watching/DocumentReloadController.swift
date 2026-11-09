@@ -65,13 +65,12 @@ final class DocumentReloadController {
     var followModeEnabled: Bool {
         didSet {
             guard followModeEnabled != oldValue else { return }
-            UserDefaults.standard.set(followModeEnabled, forKey: followModeDefaultsKey)
+            RecentPathDefaults.set(followModeEnabled, for: url.path, in: Self.followModeKey)
         }
     }
 
     var visibleBlockID: String?
     private(set) var requestedBlockID: String?
-    func requestJump(to id: String) { requestedBlockID = id }
     func takeRequestedBlockID() -> String? {
         defer { requestedBlockID = nil }
         return requestedBlockID
@@ -100,8 +99,12 @@ final class DocumentReloadController {
     /// scope active at attach time, same as any other file access to a
     /// security-scoped URL (e.g. one obtained from an Open panel).
     private var isAccessingSecurityScope = false
+    /// A scope of our own, resolved from a fresh bookmark, so Recents (or
+    /// anything else) stopping the scope we were handed can't cut this open
+    /// document off while its window lives.
+    private var ownScope: URL?
 
-    private var followModeDefaultsKey: String { "followMode:\(url.path)" }
+    private static let followModeKey = "followModeByPath"
 
     /// Debug/verification hook (mirrors `SnapshotRunner`'s `TYPESET_SNAPSHOT`
     /// pattern): fires after each watcher-driven reload is applied, with
@@ -116,13 +119,18 @@ final class DocumentReloadController {
 
     init(url: URL) {
         self.url = url
-        self.followModeEnabled = UserDefaults.standard.bool(forKey: "followMode:\(url.path)")
+        self.followModeEnabled = RecentPathDefaults.value(for: url.path, in: Self.followModeKey) as? Bool ?? false
     }
 
     /// Starts watching and parses the initial document off the main actor.
     func start() {
         isStopped = false
         isAccessingSecurityScope = url.startAccessingSecurityScopedResource()
+        if ownScope == nil, let bookmark = SecurityScopedBookmark.make(url),
+           case .available(let scoped, _) = SecurityScopedBookmark.resolve(bookmark, path: url.path),
+           scoped.startAccessingSecurityScopedResource() {
+            ownScope = scoped
+        }
         FolderAccessStore.shared.noteDocumentOpened(url)
         let watcher = FileWatcher(url: url)
         watcher.onReload = { [weak self] in
@@ -156,6 +164,8 @@ final class DocumentReloadController {
             url.stopAccessingSecurityScopedResource()
             isAccessingSecurityScope = false
         }
+        ownScope?.stopAccessingSecurityScopedResource()
+        ownScope = nil
     }
 
     private func loadInitial() {
@@ -202,22 +212,14 @@ final class DocumentReloadController {
         guard !isStopped else { return }
         if isLoading { loadInitial(); return }
         if loadError != nil { loadInitial(); return }
-        hasExternalChanges = true
-        lastExternalChange = Date()
-        if isEditing {
-            guard let current = try? DocumentFileIO.read(url), current != diskSnapshot else { return }
-            let (newState, action) = EditConflictMachine.transition(state: conflictState, event: .externalChange)
-            conflictState = newState
-            if action == .showConflictBanner {
-                return
-            }
-            // .silentReload (or a no-op) falls through to the normal
-            // reload pipeline below, keeping the editor buffer in sync.
-        }
-        performReload()
+        performReload(external: true)
     }
 
-    private func performReload() {
+    /// `external`: watcher-driven, so bytes identical to `diskSnapshot` (a
+    /// sibling file changed, an echo) are ignored rather than surfaced as
+    /// "Updated just now". The read always happens off the main actor; a
+    /// dirty buffer turns a real change into the conflict banner on return.
+    private func performReload(external: Bool = false) {
         reloadTask?.cancel()
         reloadGeneration += 1
         let generation = reloadGeneration
@@ -240,11 +242,16 @@ final class DocumentReloadController {
                 signposter.endInterval("liveReload", interval)
                 self?.onReloadReady?()
                 guard let self, !self.isStopped, self.reloadGeneration == generation else { return }
+                if external {
+                    guard result.snapshot != self.diskSnapshot else { return }
+                    self.hasExternalChanges = true
+                    self.lastExternalChange = Date()
+                }
                 if self.isEditing && (self.editRevision != revision || self.conflictState != .clean) {
                     if self.conflictState == .dirty {
                         self.conflictState = .conflictPending
                     } else if self.conflictState == .clean {
-                        self.performReload()
+                        self.performReload(external: external)
                     }
                     return
                 }
@@ -256,7 +263,7 @@ final class DocumentReloadController {
     private func apply(_ result: ReloadResult, startTime: DispatchTime) {
         diskSnapshot = result.snapshot
         if isEditing, conflictState == .clean { editedText = result.newText }
-        let changed = Data(result.newText.utf8) != Data(lastText.utf8)
+        let changed = !result.newText.utf8.elementsEqual(lastText.utf8)
         lastText = result.newText
         guard changed else { return }
 
@@ -368,12 +375,14 @@ final class DocumentReloadController {
     /// only actually transitions on the clean↔dirty edge.
     func noteEditedTextChanged(_ text: String) {
         guard isEditing else { return }
-        if Data(text.utf8) != Data(editedText.utf8) {
+        // Byte comparisons (not String ==, which is canonical-equivalence),
+        // without copying the buffer into `Data` on every keystroke.
+        if !text.utf8.elementsEqual(editedText.utf8) {
             editRevision += 1
             approvedDiskSnapshot = nil
         }
         editedText = text
-        let isDirtyNow = Data(text.utf8) != Data(lastText.utf8)
+        let isDirtyNow = !text.utf8.elementsEqual(lastText.utf8)
         switch (conflictState, isDirtyNow) {
         case (.clean, true):
             conflictState = EditConflictMachine.transition(state: .clean, event: .bufferEdited).state
@@ -420,10 +429,24 @@ final class DocumentReloadController {
         }
     }
 
+    var hasUnsavedEdits: Bool { isEditing && conflictState != .clean }
+
     /// Used before navigation, closing, and app termination.
     func prepareToLeave() -> Bool {
-        guard isEditing, conflictState != .clean else { return true }
+        guard hasUnsavedEdits else { return true }
         return save()
+    }
+
+    /// "Discard Changes" when a close/quit can't save: drop the buffer back
+    /// to the last text read from disk.
+    func discardEdits() {
+        guard isEditing else { return }
+        editedText = lastText
+        editRevision += 1
+        approvedDiskSnapshot = nil
+        saveError = nil
+        conflictState = .clean
+        window?.isDocumentEdited = false
     }
 
     /// "Keep mine" at the conflict banner: dismiss it, keep the buffer
@@ -525,46 +548,4 @@ private nonisolated func computeReload(url: URL, oldText: String, oldBlocks: [Bl
             : MarkdownParser.reparseIncremental(oldText: oldText, newText: newText, oldBlocks: oldBlocks)
     let changes = BlockDiffer.diff(old: oldBlocks, new: newBlocks)
     return ReloadResult(snapshot: snapshot, newBlocks: newBlocks, changes: changes)
-}
-
-enum DocumentFileIO {
-    struct Snapshot: Equatable, Sendable {
-        let target: URL
-        let data: Data
-        let text: String
-
-        static func == (lhs: Self, rhs: Self) -> Bool {
-            lhs.target == rhs.target && lhs.data == rhs.data
-        }
-    }
-
-    static func read(_ url: URL) throws -> Snapshot {
-        let target = url.resolvingSymlinksInPath()
-        let data = try Data(contentsOf: target)
-        guard let text = String(data: data, encoding: .utf8) else {
-            throw CocoaError(.fileReadInapplicableStringEncoding)
-        }
-        return Snapshot(target: target, data: data, text: text)
-    }
-
-    static func replace(_ url: URL, text: String, expected: Snapshot? = nil, preserveBOM: Bool = false) throws -> Snapshot {
-        let target = url.resolvingSymlinksInPath()
-        if let expected, try read(url) != expected {
-            throw CocoaError(.fileWriteFileExists)
-        }
-        let bom = (expected?.data.starts(with: [0xEF, 0xBB, 0xBF]) == true || preserveBOM)
-            ? Data([0xEF, 0xBB, 0xBF]) : Data()
-        let data = bom + Data(text.utf8)
-        if FileManager.default.fileExists(atPath: target.path) {
-            let replacementDirectory = try FileManager.default.url(
-                for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: target, create: true)
-            defer { try? FileManager.default.removeItem(at: replacementDirectory) }
-            let temporary = replacementDirectory.appendingPathComponent(UUID().uuidString)
-            try data.write(to: temporary, options: .atomic)
-            _ = try FileManager.default.replaceItemAt(target, withItemAt: temporary)
-        } else {
-            try data.write(to: target, options: .atomic)
-        }
-        return Snapshot(target: target, data: data, text: text)
-    }
 }

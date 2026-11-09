@@ -28,6 +28,50 @@ public enum FolderAccessPathing {
     }
 }
 
+/// Security-scoped bookmark make/resolve shared by folder grants, Recents
+/// and open documents. Resolution never mounts volumes or shows UI, and
+/// separates "gone for good" (`.missing`, safe to forget) from "not
+/// reachable right now" (`.unavailable`: an unplugged drive, a transient
+/// error), which must keep the bookmark.
+public enum SecurityScopedBookmark {
+    public enum Resolution {
+        /// Resolved; `refreshed` is new bookmark data when the old one was
+        /// stale. The caller starts (and owns) the scope.
+        case available(URL, refreshed: Data?)
+        case missing
+        case unavailable
+    }
+
+    public static func make(_ url: URL) -> Data? {
+        try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+    }
+
+    /// `path`: where the bookmark last pointed, to tell a deleted file from
+    /// one on a volume that isn't mounted.
+    public static func resolve(_ data: Data, path: String) -> Resolution {
+        var isStale = false
+        do {
+            let url = try URL(
+                resolvingBookmarkData: data, options: [.withSecurityScope, .withoutUI, .withoutMounting],
+                relativeTo: nil, bookmarkDataIsStale: &isStale
+            )
+            return .available(url, refreshed: isStale ? make(url) : nil)
+        } catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile {
+            return isOnUnmountedVolume(path) ? .unavailable : .missing
+        } catch {
+            if isOnUnmountedVolume(path) { return .unavailable }
+            return FileManager.default.fileExists(atPath: path) ? .unavailable : .missing
+        }
+    }
+
+    /// `/Volumes/<name>/…` whose volume root isn't there right now.
+    public static func isOnUnmountedVolume(_ path: String) -> Bool {
+        let parts = path.split(separator: "/", omittingEmptySubsequences: true)
+        guard parts.count >= 2, parts[0] == "Volumes" else { return false }
+        return !FileManager.default.fileExists(atPath: "/Volumes/\(parts[1])")
+    }
+}
+
 /// Persists security-scoped bookmarks for folders the user has explicitly
 /// granted access to (via the "Allow access to <folder>" affordance on a
 /// broken relative link/image), so sibling files under an already-granted
@@ -127,9 +171,7 @@ public final class FolderAccessStore {
         guard FolderAccessPathing.coveringFolder(for: std.path, among: active.map(\.path)) == nil else {
             return true
         }
-        guard let data = try? std.bookmarkData(
-            options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil
-        ) else { return false }
+        guard let data = SecurityScopedBookmark.make(std) else { return false }
 
         var dict = (UserDefaults.standard.dictionary(forKey: Self.defaultsKey) as? [String: Data]) ?? [:]
         dict[std.path] = data
@@ -152,40 +194,23 @@ public final class FolderAccessStore {
         var staleKeys: [String] = []
 
         for (path, data) in dict {
-            var isStale = false
-            guard let url = try? URL(
-                resolvingBookmarkData: data, options: [.withSecurityScope],
-                relativeTo: nil, bookmarkDataIsStale: &isStale
-            ) else {
+            // Only a folder that is truly gone is forgotten; an unmounted
+            // drive or a scope that won't start this launch keeps its grant.
+            switch SecurityScopedBookmark.resolve(data, path: path) {
+            case .missing:
                 staleKeys.append(path)
+            case .unavailable:
                 continue
+            case .available(let url, let refreshed):
+                guard url.startAccessingSecurityScopedResource() else { continue }
+                if let refreshed { updated[path] = refreshed }
+                active.append(ActiveGrant(path: url.standardizedFileURL.path, url: url))
             }
-            guard url.startAccessingSecurityScopedResource() else {
-                staleKeys.append(path)
-                continue
-            }
-            if isStale, let refreshed = try? url.bookmarkData(
-                options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil
-            ) {
-                updated[path] = refreshed
-            }
-            active.append(ActiveGrant(path: url.standardizedFileURL.path, url: url))
         }
 
         for key in staleKeys { updated.removeValue(forKey: key) }
         if updated != dict { UserDefaults.standard.set(updated, forKey: Self.defaultsKey) }
 
         Self.log.debug("\(self.active.count, privacy: .public) active grant(s) at startup: \(self.active.map(\.path).joined(separator: ", "), privacy: .public)")
-    }
-
-    // MARK: - Hygiene (Settings pane TBD — see PLAN §8)
-
-    /// Stops accessing and forgets every granted folder. Unused today; kept
-    /// so a future Settings "Manage folder access" pane is a small addition
-    /// rather than new plumbing.
-    func revokeAll() {
-        for grant in active { grant.url.stopAccessingSecurityScopedResource() }
-        active.removeAll()
-        UserDefaults.standard.removeObject(forKey: Self.defaultsKey)
     }
 }
