@@ -49,7 +49,7 @@ with tempfile.TemporaryDirectory(prefix="typeset-release-check-") as directory:
 
     developer = release("developer", TEAM_ID="TU4GDL7YN2")
     assert developer.returncode == 0, developer.stderr
-    assert "<CODE_SIGN_IDENTITY=Developer ID Application:>" in log.read_text()
+    assert "<CODE_SIGN_IDENTITY=Developer ID Application:>" not in log.read_text()
     assert "<DEVELOPMENT_TEAM=TU4GDL7YN2>" in log.read_text()
 
     log.unlink()

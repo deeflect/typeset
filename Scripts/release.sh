@@ -65,7 +65,7 @@ if [ "$EXPORT_METHOD" = app-store-connect ]; then
 else
   run xcodebuild -scheme Typeset -configuration Release -archivePath "$ARCHIVE_PATH" \
     -destination 'generic/platform=macOS' "DEVELOPMENT_TEAM=$TEAM_ID" \
-    "CODE_SIGN_IDENTITY=$CERT_CLASS" -allowProvisioningUpdates archive
+    -allowProvisioningUpdates archive  # export re-signs with Developer ID; forcing it here breaks automatic signing
 fi
 
 PLIST="$OUT_DIR/ExportOptions.plist"
@@ -87,7 +87,7 @@ fi
 run xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" -exportPath "$EXPORT_PATH" -exportOptionsPlist "$PLIST" -allowProvisioningUpdates
 echo "Exported to $EXPORT_PATH"
 if [ "$EXPORT_METHOD" = developer-id ]; then
-  echo "Next: notarize and staple the exported app (see SHIPPING.md)."
+  echo "Next: Scripts/dmg.sh notarizes it and builds the DMG."
 else
   echo "Next: upload the exported package with Transporter or App Store Connect."
 fi
