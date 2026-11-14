@@ -34,3 +34,6 @@ site/.astro
 
 # Tesseract render scratch
 .tesseract-work/
+
+# Per-machine signing overrides
+Config/Local.xcconfig
