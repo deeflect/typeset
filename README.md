@@ -1,7 +1,7 @@
 <p align="center"><a href="https://typeset.md"><img src="assets/icon.png" alt="Typeset.md icon" width="120"></a></p>
 <h1 align="center">Typeset.md</h1>
 <p align="center"><strong>A free, open-source Markdown reader for Mac</strong></p>
-<p align="center"><a href="https://typeset.md">Website</a> · <a href="https://github.com/deeflect/typeset/issues/new?template=bug_report.yml">Report a bug</a> · <a href="https://github.com/deeflect/typeset/issues/new?template=feature_request.yml">Request a feature</a></p>
+<p align="center"><a href="https://typeset.md">Website</a> · <a href="https://youtu.be/ad_0FR4OVeA">Watch 40s demo</a> · <a href="https://github.com/deeflect/typeset/issues/new?template=bug_report.yml">Report a bug</a> · <a href="https://github.com/deeflect/typeset/issues/new?template=feature_request.yml">Request a feature</a></p>
 <p align="center"><img src="https://img.shields.io/badge/platform-macOS%2026-2A4A7F?style=flat-square" alt="platform: macOS 26"> <img src="https://img.shields.io/badge/price-free-2A4A7F?style=flat-square" alt="price: free"> <img src="https://img.shields.io/badge/license-AGPL--3.0-2A4A7F?style=flat-square" alt="license: AGPL-3.0"></p>
 <p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/hero-dark.png"><img src="assets/hero-light.png" alt="A Markdown plan rendered in Typeset.md" width="720"></picture></p>
 
