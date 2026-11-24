@@ -575,6 +575,7 @@ extension NativeMarkdownDocumentTests {
         }, object: nil)
         wait(for: [found], timeout: 2)
         XCTAssertEqual((view.string as NSString).substring(with: view.selectedRange()), "Needle")
+        XCTAssertEqual(view.enclosingScrollView?.isFindBarVisible, false)
         let marker = document.checkboxes[0].range.location
         view.mouseDown(with: mouseEvent(.leftMouseDown, at: marker, in: view, window: window))
         XCTAssertEqual(toggled?.0, 0)
@@ -609,6 +610,7 @@ extension NativeMarkdownDocumentTests {
         XCTAssertTrue(findPasteboard.setString("Needle", forType: .string))
         view.setSelectedRange(NSRange(location: 0, length: 0))
         controller.showFind()
+        XCTAssertEqual(view.enclosingScrollView?.isFindBarVisible, true)
         controller.findNext()
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         XCTAssertEqual((view.string as NSString).substring(with: view.selectedRange()), "Needle")

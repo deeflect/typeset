@@ -130,11 +130,26 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
         public func findNext() { find(.nextMatch) }
         public func findPrevious() { find(.previousMatch) }
         private func find(_ action: NSTextFinder.Action) {
-            guard let view, view.window != nil else { pendingFindAction = action; return }
+            guard let view, let window = view.window else { pendingFindAction = action; return }
             pendingFindAction = nil
             let item = NSMenuItem()
+            let fieldEditor = window.firstResponder as? NSTextView
+            let previousResponder = (fieldEditor?.isFieldEditor == true ? fieldEditor?.delegate as? NSResponder : nil)
+                ?? window.firstResponder
+            // Showing the bar loads the find pasteboard on a cold AppKit finder.
+            let needsFindBar = (action == .nextMatch || action == .previousMatch)
+                && view.enclosingScrollView?.findBarView == nil
+            if needsFindBar {
+                item.tag = NSTextFinder.Action.showFindInterface.rawValue
+                view.performTextFinderAction(item)
+            }
             item.tag = action.rawValue
-            view.performFindPanelAction(item)
+            view.performTextFinderAction(item)
+            if needsFindBar {
+                item.tag = NSTextFinder.Action.hideFindInterface.rawValue
+                view.performTextFinderAction(item)
+                window.makeFirstResponder(previousResponder)
+            }
         }
         fileprivate func applyPendingFind() {
             if let pendingFindAction { find(pendingFindAction) }
