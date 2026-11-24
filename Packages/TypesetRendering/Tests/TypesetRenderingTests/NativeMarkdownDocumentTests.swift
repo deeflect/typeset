@@ -547,7 +547,7 @@ extension NativeMarkdownDocumentTests {
         let controller = NativeMarkdownReadingView.Controller()
         let pendingFindPasteboard = NSPasteboard(name: .find)
         pendingFindPasteboard.clearContents()
-        pendingFindPasteboard.setString("Needle", forType: .string)
+        XCTAssertTrue(pendingFindPasteboard.setString("Needle", forType: .string))
         controller.findNext()
         var toggled: (Int, Int, Bool)?
         var metadataClicks = 0
@@ -606,7 +606,8 @@ extension NativeMarkdownDocumentTests {
         XCTAssertEqual(copyClicks, 0)
         let findPasteboard = NSPasteboard(name: .find)
         findPasteboard.clearContents()
-        findPasteboard.setString("Needle", forType: .string)
+        XCTAssertTrue(findPasteboard.setString("Needle", forType: .string))
+        view.setSelectedRange(NSRange(location: 0, length: 0))
         controller.showFind()
         controller.findNext()
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
