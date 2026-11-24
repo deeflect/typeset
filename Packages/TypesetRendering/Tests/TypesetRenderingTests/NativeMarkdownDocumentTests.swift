@@ -555,15 +555,25 @@ extension NativeMarkdownDocumentTests {
         let reading = NativeMarkdownReadingView(document: document, theme: theme, controller: controller,
             onCheckbox: { toggled = ($0, $1, $2) }, onToggle: { _ in metadataClicks += 1 }, onCodeCopied: { copyClicks += 1 })
         let hosting = NSHostingView(rootView: reading)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 540), styleMask: [.titled], backing: .buffered, defer: false)
+        let windowFrame = NSRect(x: 0, y: 0, width: 580, height: 540)
+        hosting.frame = windowFrame
+        hosting.layoutSubtreeIfNeeded()
+        guard let view = findTextView(in: hosting) else { return XCTFail("missing native view") }
+        let laidOut = expectation(description: "main queue drains before window attachment")
+        DispatchQueue.main.async { laidOut.fulfill() }
+        wait(for: [laidOut], timeout: 2)
+        XCTAssertEqual(view.selectedRange().length, 0)
+
+        let window = NSWindow(contentRect: windowFrame, styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = hosting
         window.makeKeyAndOrderFront(nil)
         defer { window.close() }
         hosting.layoutSubtreeIfNeeded()
-        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
-        guard let view = findTextView(in: hosting) else { return XCTFail("missing native view") }
-        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        let found = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            MainActor.assumeIsolated { controller.selection()?.text == "Needle" }
+        }, object: nil)
+        wait(for: [found], timeout: 2)
         XCTAssertEqual((view.string as NSString).substring(with: view.selectedRange()), "Needle")
         let marker = document.checkboxes[0].range.location
         view.mouseDown(with: mouseEvent(.leftMouseDown, at: marker, in: view, window: window))

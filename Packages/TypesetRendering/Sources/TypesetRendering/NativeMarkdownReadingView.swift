@@ -130,16 +130,14 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
         public func findNext() { find(.nextMatch) }
         public func findPrevious() { find(.previousMatch) }
         private func find(_ action: NSTextFinder.Action) {
-            guard let view else { pendingFindAction = action; return }
+            guard let view, view.window != nil else { pendingFindAction = action; return }
+            pendingFindAction = nil
             let item = NSMenuItem()
             item.tag = action.rawValue
             view.performFindPanelAction(item)
         }
         fileprivate func applyPendingFind() {
-            if let pendingFindAction {
-                self.pendingFindAction = nil
-                find(pendingFindAction)
-            }
+            if let pendingFindAction { find(pendingFindAction) }
         }
         public func selectAll() { view?.selectAll(nil) }
         public func copy() { view?.copy(nil) }
@@ -205,7 +203,6 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
             self.controller = controller
             controller.view = view
             controller.coordinator = self
-            DispatchQueue.main.async { [weak controller] in controller?.applyPendingFind() }
             scroll.contentView.postsBoundsChangedNotifications = true
             scroll.contentView.postsFrameChangedNotifications = true
             NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
@@ -675,7 +672,12 @@ private final class ReadingTextView: NSTextView {
     private var flashGeneration = 0
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        window?.acceptsMouseMovedEvents = true
+        guard let window else { return }
+        window.acceptsMouseMovedEvents = true
+        // SwiftUI can still be laying out the reader on this turn.
+        DispatchQueue.main.async { [weak self] in
+            self?.coordinator?.controller?.applyPendingFind()
+        }
     }
     override func draw(_ dirtyRect: NSRect) {
         (layoutManager as? ChipLayoutManager)?.containerOrigin = textContainerOrigin
