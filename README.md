@@ -35,7 +35,7 @@ Space bar previews and Finder thumbnails render with the same native engine. Ope
 
 ## Download
 
-[Download the latest Typeset.md for Mac](https://github.com/deeflect/typeset/releases/latest) from the releases page. It is a signed and notarized DMG: open it and drag Typeset to Applications. The app is free and needs macOS 26 Tahoe. Once it is installed, double-click a .md file and it opens rendered.
+[Download the latest Typeset.md for Mac](https://github.com/deeflect/typeset/releases/latest) from the releases page. It is a signed and notarized DMG: open it and drag Typeset to Applications. The app is free and needs macOS 26 Tahoe. Once it is installed, double-click a .md file and it opens rendered. What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 
 A Mac App Store version is waiting for review and is not listed yet.
 
