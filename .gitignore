@@ -37,3 +37,11 @@ site/.astro
 
 # Per-machine signing overrides
 Config/Local.xcconfig
+
+# larger than 20MB — excluded by agent-guard
+.build-dd/Build/Intermediates.noindex/XCBuildData/build.db
+.build-dd/Build/Products/Release/MarcoQuickLook.appex.dSYM/Contents/Resources/DWARF/MarcoQuickLook
+.build-dd/Build/Products/Release/Marco.app.dSYM/Contents/Resources/DWARF/Marco
+.build-release/Marco.xcarchive/dSYMs/MarcoQuickLook.appex.dSYM/Contents/Resources/DWARF/MarcoQuickLook
+.build-release/Marco.xcarchive/dSYMs/Marco.app.dSYM/Contents/Resources/DWARF/Marco
+.build-release/Typeset.xcarchive/dSYMs/Typeset.app.dSYM/Contents/Resources/DWARF/Typeset

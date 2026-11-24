@@ -99,16 +99,20 @@ final class DocumentOpener {
 
     func open(_ url: URL) { open([url]) }
 
+    private static let clipboardDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm"
+        return formatter
+    }()
+
     /// File ▸ New from Clipboard (Preview's ⌘N): writes the pasteboard's plain
     /// text to "Clipboard <date> at <time>.md" in the container's temporary
     /// folder and opens it like any file. Beeps when there's no text.
     func openClipboard(_ pasteboard: NSPasteboard = .general) {
         guard let text = pasteboard.string(forType: .string),
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { NSSound.beep(); return }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm"
-        let base = "Clipboard \(formatter.string(from: Date()))"
+        let base = "Clipboard \(Self.clipboardDateFormatter.string(from: Date()))"
         let folder = FileManager.default.temporaryDirectory
         var url = folder.appendingPathComponent(base + ".md")
         var copy = 2

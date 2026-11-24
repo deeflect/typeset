@@ -42,9 +42,14 @@ enum SnapshotRunner {
                     // TYPESET_SNAPSHOT_EXPANDED="metadata,details:More": render interactive toggle states.
                     let expanded = env["TYPESET_SNAPSHOT_EXPANDED"].map { Set($0.split(separator: ",").map(String.init)) }
                     let snapshot = await Task.detached(priority: .userInitiated) {
-                        NativeMarkdownDocument.build(source: source, blocks: MarkdownParser.parse(source, mdx: MarkdownParser.isMDX(url)), theme: theme, documentURL: url, expanded: expanded)
+                        let parsed = MarkdownParser.parseDocument(source, mdx: MarkdownParser.isMDX(url))
+                        return NativeMarkdownDocument.build(source: source, blocks: parsed.blocks, document: parsed.document, theme: theme, documentURL: url, expanded: expanded)
                     }.value
                     let buildMs = milliseconds(since: buildStart)
+                    for diagram in snapshot.diagrams {
+                        _ = await DiagramRenderer.shared.render(
+                            diagram.source, kind: diagram.kind, isDark: scheme == .dark, fontSize: diagram.fontSize)
+                    }
                     let layoutStart = DispatchTime.now()
                     let reader = NativeMarkdownReadingView(document: snapshot, theme: theme, controller: .init())
                     let hosting = NSHostingView(rootView: reader)

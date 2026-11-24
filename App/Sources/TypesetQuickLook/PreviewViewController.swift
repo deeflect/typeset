@@ -43,10 +43,11 @@ final class PreviewViewController: NSViewController, @MainActor QLPreviewingCont
             ? ColorScheme.dark : .light
         let theme = Theme(colorScheme: appearance, scale: 1)
         let task = Task.detached(priority: .userInitiated) {
-            let source = Self.capped(try DocumentFileIO.read(url).text)
+            let source = try Self.readCappedSource(url).text
             try Task.checkCancellation()
+            let parsed = MarkdownParser.parseDocument(source, mdx: MarkdownParser.isMDX(url))
             return try NativeMarkdownDocument.buildCancellable(
-                source: source, blocks: MarkdownParser.parse(source, mdx: MarkdownParser.isMDX(url)), theme: theme, documentURL: url)
+                source: source, blocks: parsed.blocks, document: parsed.document, theme: theme, documentURL: url)
         }
         preparationTask = task
         Task { @MainActor in
@@ -78,6 +79,46 @@ final class PreviewViewController: NSViewController, @MainActor QLPreviewingCont
         let cut = head.lastIndex(of: UInt8(ascii: "\n")).map { head[..<$0] } ?? head
         return String(decoding: cut, as: UTF8.self)
             + "\n\n---\n\n*Preview shows the first 2 MB. Open in Typeset for the full file.*\n"
+    }
+
+    nonisolated static func readCappedSource(_ url: URL, limit: Int = previewLimit) throws -> (text: String, bytesRead: Int) {
+        let handle = try FileHandle(forReadingFrom: url.resolvingSymlinksInPath())
+        defer { try? handle.close() }
+        var data = Data()
+        data.reserveCapacity(limit + 4) // UTF-8 BOM plus one byte beyond the text cap.
+        while data.count < limit + 4 {
+            try Task.checkCancellation()
+            guard let chunk = try handle.read(upToCount: limit + 4 - data.count), !chunk.isEmpty else { break }
+            data.append(chunk)
+        }
+        try Task.checkCancellation()
+        let bytesRead = data.count
+        let bytes = data.dropFirst(data.starts(with: [0xEF, 0xBB, 0xBF]) ? 3 : 0)
+        guard bytes.count > limit else {
+            guard let text = String(data: data, encoding: .utf8) else { throw CocoaError(.fileReadInapplicableStringEncoding) }
+            return (text, bytesRead)
+        }
+        let head = bytes.prefix(limit)
+        let newline = head.lastIndex(of: UInt8(ascii: "\n"))
+        let cut = newline.map { head[..<$0] } ?? head
+        if String(validating: cut, as: UTF8.self) == nil {
+            // A valid scalar may cross the cap; the old lossy cap shows its replacement character.
+            guard newline == nil, (1..<min(4, cut.count + 1)).contains(where: { count in
+                let tail = Array(cut.suffix(count))
+                let first = tail[0]
+                let width = (0xC2...0xDF).contains(first) ? 2 : (0xE0...0xEF).contains(first) ? 3 : (0xF0...0xF4).contains(first) ? 4 : 0
+                guard width > count, String(validating: cut.dropLast(count), as: UTF8.self) != nil else { return false }
+                guard tail.dropFirst().allSatisfy({ (0x80...0xBF).contains($0) }) else { return false }
+                if count > 1 {
+                    let second = tail[1]
+                    guard (first != 0xE0 || second >= 0xA0), (first != 0xED || second <= 0x9F),
+                          (first != 0xF0 || second >= 0x90), (first != 0xF4 || second <= 0x8F) else { return false }
+                }
+                return true
+            }) else { throw CocoaError(.fileReadInapplicableStringEncoding) }
+        }
+        return (String(decoding: cut, as: UTF8.self)
+                + "\n\n---\n\n*Preview shows the first 2 MB. Open in Typeset for the full file.*\n", bytesRead)
     }
 
     private func install(_ document: NativeMarkdownDocument, theme: Theme) {

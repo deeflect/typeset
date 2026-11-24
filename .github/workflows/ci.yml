@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test TypesetCore
+        run: swift test --package-path Packages/TypesetCore
+
+      - name: Test TypesetRendering
+        run: swift test --package-path Packages/TypesetRendering
+
+      - name: Check scripts
+        run: |
+          python3 Scripts/check-release.py
+          python3 Scripts/check-cli.py

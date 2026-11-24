@@ -23,6 +23,12 @@ packages:
   Highlightr:
     url: https://github.com/raspu/Highlightr.git
     exactVersion: 2.3.0
+  swift-mermaid:
+    url: https://github.com/Australware/swift-mermaid.git
+    exactVersion: 0.3.0
+  SwiftMath:
+    url: https://github.com/mgriebling/SwiftMath.git
+    exactVersion: 1.7.3
 
 targets:
   Typeset:
@@ -40,6 +46,8 @@ targets:
       - package: TypesetRendering
       - package: Highlightr
       - target: TypesetQuickLook
+        embed: true
+      - target: TypesetQuickLookThumbnail
         embed: true
     settings:
       base:
@@ -154,6 +162,47 @@ targets:
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.files.user-selected.read-only: true
+  TypesetQuickLookThumbnail:
+    type: app-extension
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: App/Sources/TypesetQuickLookThumbnail
+        excludes:
+          - "Resources/**"
+      - path: App/Sources/TypesetQuickLookThumbnail/Resources
+        buildPhase: resources
+    dependencies:
+      - package: TypesetCore
+      - package: TypesetRendering
+    settings:
+      base:
+        PRODUCT_NAME: TypesetQuickLookThumbnail
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID).thumbnail
+        MARKETING_VERSION: $(MARKETING_VERSION)
+        SWIFT_EMIT_LOC_STRINGS: NO
+        SKIP_INSTALL: YES
+        PROVISIONING_PROFILE_REQUIRED: YES
+    info:
+      path: App/Sources/TypesetQuickLookThumbnail/Info.plist
+      properties:
+        CFBundleDisplayName: $(APP_NAME) Thumbnails
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSHumanReadableCopyright: $(APP_COPYRIGHT)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.quicklook.thumbnail
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ThumbnailProvider
+          NSExtensionAttributes:
+            QLSupportedContentTypes:
+              - net.daringfireball.markdown
+              - org.mdxjs.mdx
+            QLThumbnailMinimumDimension: 32
+    entitlements:
+      path: App/Sources/TypesetQuickLookThumbnail/TypesetQuickLookThumbnail.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.files.user-selected.read-only: true
   TypesetTests:
     type: bundle.unit-test
     platform: macOS
@@ -175,6 +224,7 @@ targets:
     deploymentTarget: "26.0"
     sources:
       - path: App/Sources/TypesetQuickLook/PreviewViewController.swift
+      - path: App/Sources/TypesetQuickLookThumbnail/ThumbnailProvider.swift
       - path: App/Tests/TypesetQuickLookTests
     dependencies:
       - package: TypesetCore
@@ -189,6 +239,7 @@ schemes:
       targets:
         Typeset: all
         TypesetQuickLook: all
+        TypesetQuickLookThumbnail: all
         TypesetTests: [test]
     test:
       config: Debug

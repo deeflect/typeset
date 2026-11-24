@@ -71,28 +71,6 @@ for name in ["large-200kb.md", "large-1mb.md", "large-10mb.md"] {
     print("")
 }
 
-// MARK: - Progressive parse (goal 3: time-to-first-blocks budget < 300ms)
-
-if let text = fixture("large-10mb.md") {
-    print("--- large-10mb.md progressive parse ---")
-    let start = CFAbsoluteTimeGetCurrent()
-    var firstChunkElapsed: Double?
-    var totalBlocks = 0
-    var chunkCount = 0
-    for await chunk in MarkdownParser.parseProgressive(text) {
-        if firstChunkElapsed == nil {
-            firstChunkElapsed = CFAbsoluteTimeGetCurrent() - start
-        }
-        totalBlocks += chunk.count
-        chunkCount += 1
-    }
-    let totalElapsed = CFAbsoluteTimeGetCurrent() - start
-    print(String(format: "  time to first chunk: %.4fs (budget < 0.3s)", firstChunkElapsed ?? -1))
-    print(String(format: "  time to all chunks:  %.4fs", totalElapsed))
-    print("  chunks: \(chunkCount), total blocks: \(totalBlocks)")
-    print("")
-}
-
 // MARK: - Incremental reparse (goal 4: budget < 50ms for a 1-paragraph edit)
 
 if let text = fixture("large-1mb.md") {

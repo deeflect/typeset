@@ -7,28 +7,27 @@ import SwiftUI
 /// `Highlightr` instance per appearance, since it isn't thread-safe) and
 /// caches results by (code, language, appearance).
 ///
-/// The returned `AttributedString` carries only per-token foreground
-/// colors — no baked font — so the code-block view applies the themed
-/// SF Mono at render time and text-size scaling works without
-/// re-highlighting.
-/// `@unchecked Sendable`: engines stay on the serial queue; the cache has
-/// its own short lock so view-body lookups never wait for JavaScriptCore.
+/// The returned `NSAttributedString` carries only per-token foreground
+/// colors — no baked font — so the reader applies the themed SF Mono at
+/// render time and text-size scaling works without re-highlighting.
+/// `@unchecked Sendable`: engines stay on the serial queue; `nativeCache`
+/// uses thread-safe `NSCache`.
 public final class CodeHighlighter: @unchecked Sendable {
     public static let shared = CodeHighlighter()
 
-    private struct Key: Hashable {
-        let code: String
-        let language: String
-        let isDark: Bool
+    private final class Cached: NSObject, @unchecked Sendable {
+        let attributed: NSAttributedString
+        init(_ attributed: NSAttributedString) { self.attributed = attributed }
     }
 
-    private let queue = DispatchQueue(label: "com.dee.typeset.highlight", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "com.deeflect.typeset.highlight", qos: .userInitiated)
     private var lightEngine: Highlightr?
     private var darkEngine: Highlightr?
-    private var cache: [Key: AttributedString] = [:]
-    private var nativeCache: [Key: NSAttributedString] = [:]
-    private let cacheLock = NSLock()
-    private let cacheLimit = 128 // At most 128 eligible code blocks per representation.
+    nonisolated(unsafe) private let nativeCache: NSCache<NSString, Cached> = {
+        let cache = NSCache<NSString, Cached>()
+        cache.countLimit = 256
+        return cache
+    }()
 
     // Canonical names and aliases from Highlightr 2.3.0's bundled highlight.js 11.11.1.
     // Highlightr auto-detects on an unknown name, so reject it before creating an engine.
@@ -65,51 +64,24 @@ public final class CodeHighlighter: @unchecked Sendable {
         return language
     }
 
-    private init() {}
-
-    /// Highlights `code`, or returns `nil` when there's no usable language
-    /// tag or highlighting fails — the caller then renders plain monospace.
-    public func highlighted(code: String, language: String?, isDark: Bool) async -> AttributedString? {
-        guard let language = Self.supportedLanguage(language, code: code) else { return nil }
-        return await withCheckedContinuation { continuation in
-            queue.async {
-                let key = Key(code: code, language: language, isDark: isDark)
-                self.cacheLock.lock()
-                let hit = self.cache[key]
-                self.cacheLock.unlock()
-                if let hit {
-                    continuation.resume(returning: hit)
-                    return
-                }
-
-                let engine = self.engine(isDark: isDark)
-                guard let engine,
-                      let highlighted = engine.highlight(code, as: language, fastRender: true)
-                else {
-                    continuation.resume(returning: nil)
-                    return
-                }
-
-                let attributed = Self.stripFont(highlighted)
-                self.cacheLock.lock()
-                if self.cache.count >= self.cacheLimit { self.cache.removeAll(keepingCapacity: true) }
-                self.cache[key] = attributed
-                self.cacheLock.unlock()
-                continuation.resume(returning: attributed)
-            }
-        }
+    private static func cacheKey(code: String, language: String, isDark: Bool) -> String {
+        "\(isDark ? 1 : 0)|\(language)|\(code)"
     }
+
+    private init() {}
 
     /// Native token colors for TextKit and rich export; keeps the caller's font.
     public func highlightedNative(code: String, language: String?, isDark: Bool) async -> NSAttributedString? {
         guard let language = Self.supportedLanguage(language, code: code) else { return nil }
-        return await withCheckedContinuation { continuation in
+        let key = Self.cacheKey(code: code, language: language, isDark: isDark)
+        if let hit = nativeCache.object(forKey: key as NSString) { return hit.attributed }
+        let cached: Cached? = await withCheckedContinuation { continuation in
             queue.async {
-                let key = Key(code: code, language: language, isDark: isDark)
-                self.cacheLock.lock()
-                let hit = self.nativeCache[key]
-                self.cacheLock.unlock()
-                if let hit { continuation.resume(returning: hit); return }
+                let nsKey = key as NSString
+                if let hit = self.nativeCache.object(forKey: nsKey) {
+                    continuation.resume(returning: hit)
+                    return
+                }
                 guard let engine = self.engine(isDark: isDark),
                       let raw = engine.highlight(code, as: language, fastRender: true) else {
                     continuation.resume(returning: nil)
@@ -124,47 +96,12 @@ public final class CodeHighlighter: @unchecked Sendable {
                     }
                     for (range, color) in fixes { result.addAttribute(.foregroundColor, value: color, range: range) }
                 }
-                let immutable = result.copy() as! NSAttributedString
-                self.cacheLock.lock()
-                if self.nativeCache.count >= self.cacheLimit { self.nativeCache.removeAll(keepingCapacity: true) }
-                self.nativeCache[key] = immutable
-                self.cacheLock.unlock()
-                continuation.resume(returning: immutable)
+                let entry = Cached(result.copy() as! NSAttributedString)
+                self.nativeCache.setObject(entry, forKey: nsKey)
+                continuation.resume(returning: entry)
             }
         }
-    }
-
-    /// Synchronous cache read — lets a view show highlighted code on its
-    /// first frame when the result is already cached (and powers snapshot
-    /// rendering, which can't await).
-    public func cached(code: String, language: String?, isDark: Bool) -> AttributedString? {
-        guard let language = Self.supportedLanguage(language, code: code) else { return nil }
-        let key = Key(code: code, language: language, isDark: isDark)
-        cacheLock.lock()
-        defer { cacheLock.unlock() }
-        return cache[key]
-    }
-
-    /// Synchronously compute and cache (used to pre-warm before a snapshot).
-    @discardableResult
-    public func warm(code: String, language: String?, isDark: Bool) -> AttributedString? {
-        guard let language = Self.supportedLanguage(language, code: code) else { return nil }
-        return queue.sync {
-            let key = Key(code: code, language: language, isDark: isDark)
-            cacheLock.lock()
-            let hit = cache[key]
-            cacheLock.unlock()
-            if let hit { return hit }
-            guard let engine = engine(isDark: isDark),
-                  let highlighted = engine.highlight(code, as: language, fastRender: true)
-            else { return nil }
-            let attributed = Self.stripFont(highlighted)
-            cacheLock.lock()
-            if cache.count >= cacheLimit { cache.removeAll(keepingCapacity: true) }
-            cache[key] = attributed
-            cacheLock.unlock()
-            return attributed
-        }
+        return cached?.attributed
     }
 
     private func engine(isDark: Bool) -> Highlightr? {
@@ -183,22 +120,6 @@ public final class CodeHighlighter: @unchecked Sendable {
             }
             return lightEngine
         }
-    }
-
-    /// Rebuilds the string keeping only foreground colors, dropping the
-    /// baked font so the view controls size/scaling.
-    private static func stripFont(_ ns: NSAttributedString) -> AttributedString {
-        var result = AttributedString()
-        let full = NSRange(location: 0, length: ns.length)
-        let nsString = ns.string as NSString
-        ns.enumerateAttribute(.foregroundColor, in: full) { value, range, _ in
-            var piece = AttributedString(nsString.substring(with: range))
-            if let color = value as? NSColor {
-                piece.foregroundColor = Color(nsColor: color)
-            }
-            result.append(piece)
-        }
-        return result
     }
 
     private static func readableDarkColor(_ color: NSColor) -> NSColor {

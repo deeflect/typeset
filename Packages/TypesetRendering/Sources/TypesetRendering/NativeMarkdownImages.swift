@@ -16,7 +16,7 @@ enum NativeMarkdownImages {
         cache.totalCostLimit = 48 * 1024 * 1024
         return cache
     }()
-    private static let queue = DispatchQueue(label: "com.dee.typeset.native-images", qos: .utility)
+    private static let queue = DispatchQueue(label: "com.deeflect.typeset.native-images", qos: .utility)
 
     static func load(_ url: URL) async -> Decoded {
         guard url.isFileURL else { return Decoded(image: nil, png: nil) }
@@ -68,7 +68,7 @@ enum NativeMarkdownImages {
 }
 
 public extension NativeMarkdownDocument {
-    /// Load local images for PDF/RTF export without changing character offsets.
+    /// Load local images, diagrams, and math for PDF/RTF export without changing character offsets.
     @MainActor func withLoadedLocalImages() async -> NSAttributedString {
         let result = NSMutableAttributedString(attributedString: materializedAttributedString())
         for image in images {
@@ -76,6 +76,13 @@ public extension NativeMarkdownDocument {
             let decoded = await NativeMarkdownImages.load(url)
             guard decoded.image != nil else { continue }
             result.addAttribute(.attachment, value: NativeMarkdownImages.attachment(for: decoded, isDark: isDark), range: image.range)
+        }
+        for diagram in diagrams {
+            let rendered = await DiagramRenderer.shared.render(diagram.source, kind: diagram.kind, isDark: isDark, fontSize: diagram.fontSize)
+            let existing = result.attribute(.attachment, at: diagram.range.location, effectiveRange: nil) as? NSTextAttachment
+            if let attachment = diagram.attachment(for: rendered, maxWidth: 600, existing: existing, isDark: isDark) {
+                result.addAttribute(.attachment, value: attachment, range: diagram.range)
+            }
         }
         for code in codeRanges {
             guard let highlighted = await CodeHighlighter.shared.highlightedNative(code: code.code, language: code.language, isDark: isDark),

@@ -217,7 +217,7 @@ final class ChevronCell: NSTextAttachmentCell {
     }
 
     /// The right-pointing chevron in a flipped 14×10 box, turned `angle` degrees clockwise about its center.
-    static func stroke(angle: CGFloat, color: NSColor) {
+    nonisolated static func stroke(angle: CGFloat, color: NSColor) {
         let r = angle * .pi / 180
         func p(_ x: CGFloat, _ y: CGFloat) -> NSPoint {
             NSPoint(x: 7 + x * cos(r) - y * sin(r), y: 5 + x * sin(r) + y * cos(r))

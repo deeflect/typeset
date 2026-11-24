@@ -49,8 +49,9 @@ enum PDFExporter {
     static func preparedDocument(source: String, url: URL?) async -> NSAttributedString {
         let theme = Theme(colorScheme: .light, scale: 1)
         let snapshot = await Task.detached(priority: .userInitiated) {
-            NativeMarkdownDocument.build(
-                source: source, blocks: MarkdownParser.parse(source, mdx: MarkdownParser.isMDX(url)), theme: theme,
+            let parsed = MarkdownParser.parseDocument(source, mdx: MarkdownParser.isMDX(url))
+            return NativeMarkdownDocument.build(
+                source: source, blocks: parsed.blocks, document: parsed.document, theme: theme,
                 documentURL: url, metadataExpanded: false)
         }.value
         return await snapshot.withLoadedLocalImages()

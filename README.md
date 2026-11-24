@@ -27,6 +27,12 @@ Edit the source for small changes. Ticking a checkbox writes back to the file.
 ### Hand it on
 Print, save a PDF, or copy out as rich text for Pages, Word and Google Docs.
 
+### Mermaid diagrams & LaTeX math, offline
+Flowcharts, sequence diagrams, ER/state/pie/git graphs, and LaTeX formulas render natively in pure Swift with no WebView and no internet access.
+
+### Quick Look & CLI
+Space bar previews and Finder thumbnails render with the same native engine. Open files, folders, or piped stdin from your terminal or agent hooks with [`Scripts/typeset`](docs/cli-and-agents.md).
+
 ## Download
 
 [Download the latest Typeset.md for Mac](https://github.com/deeflect/typeset/releases/latest) from the releases page. It is a signed and notarized DMG: open it and drag Typeset to Applications. The app is free and needs macOS 26 Tahoe. Once it is installed, double-click a .md file and it opens rendered.

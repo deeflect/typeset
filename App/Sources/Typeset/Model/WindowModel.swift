@@ -179,11 +179,13 @@ final class WindowModel {
         snapshotTask?.cancel()
         readingSnapshot = nil
         snapshotSource = nil
+        outlineItems = []
         controller?.stop()
         let controller = DocumentReloadController(url: url)
         controller.window = window
         controller.onInitialLoaded = { [weak self, weak controller] in
             guard let self, let controller else { return }
+            self.outlineItems = OutlineBuilder.build(from: controller.blocks)
             if controller.loadError == nil, let stored = LastViewedStore.shared.blockIDs(for: url) {
                 (self.changedSinceViewed, self.removedSinceViewed) = BlockDiffer.changesSince(stored: stored, current: controller.blocks)
                 self.nativeReader.markChanged(blockIDs: Set(self.changedSinceViewed))
@@ -199,6 +201,7 @@ final class WindowModel {
         }
         controller.onDocumentChanged = { [weak self, weak controller] in
             guard let self, let controller else { return }
+            self.outlineItems = OutlineBuilder.build(from: controller.blocks)
             self.buildSnapshot(for: controller)
         }
         self.controller = controller
@@ -224,13 +227,14 @@ final class WindowModel {
         snapshotTask?.cancel()
         let source = controller.currentText
         let blocks = controller.blocks
+        let parsed = controller.isEditing ? nil : controller.parsedDocument
         let theme = readingTheme
         let url = controller.url
         let expanded = expanded
         snapshotTask = Task.detached(priority: .userInitiated) { [weak self] in
             guard !Task.isCancelled else { return }
             guard let snapshot = try? NativeMarkdownDocument.buildCancellable(
-                source: source, blocks: blocks, theme: theme, documentURL: url, expanded: expanded
+                source: source, blocks: blocks, document: parsed?.document, theme: theme, documentURL: url, expanded: expanded
             ) else { return }
             await MainActor.run { [weak self] in
                 guard let self, self.snapshotGeneration == generation else { return }
@@ -630,8 +634,8 @@ final class WindowModel {
     // MARK: - Outline sidebar
 
     /// The document's flat heading outline (one entry per top-level heading),
-    /// rebuilt from the live block model so it tracks live reloads.
-    var outlineItems: [OutlineItem] { OutlineBuilder.build(from: controller?.blocks ?? []) }
+    /// cached from `controller.blocks` when a document loads or reloads.
+    private(set) var outlineItems: [OutlineItem] = []
 
     /// Debounced current-section tracking off the reading view's top-most
     /// block. Called by the native reader as its visible block changes.

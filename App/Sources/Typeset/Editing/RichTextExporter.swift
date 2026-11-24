@@ -15,8 +15,9 @@ enum RichTextExporter {
         pasteboard.setString(source, forType: .string)
         let initialChangeCount = pasteboard.changeCount
         let task = Task.detached(priority: .userInitiated) {
-            try NativeMarkdownDocument.buildCancellable(
-                source: source, blocks: MarkdownParser.parse(source, mdx: MarkdownParser.isMDX(url)), theme: theme, documentURL: url)
+            let parsed = MarkdownParser.parseDocument(source, mdx: MarkdownParser.isMDX(url))
+            return try NativeMarkdownDocument.buildCancellable(
+                source: source, blocks: parsed.blocks, document: parsed.document, theme: theme, documentURL: url)
         }
         buildTask = task
         Task {

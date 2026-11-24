@@ -31,12 +31,20 @@ public struct NativeMarkdownDocument: @unchecked Sendable {
         public let code: String
         public let language: String?
     }
+    /// A Mermaid fence or LaTeX formula: one U+FFFC whose attachment is swapped once it renders.
+    public struct DiagramReference {
+        public let range: NSRange
+        public let source: String
+        public let kind: DiagramRenderer.Kind
+        public let fontSize: CGFloat
+    }
 
     public let attributedString: NSAttributedString
     public let blockRanges: [BlockRange]
     public let checkboxes: [Checkbox]
     public let images: [ImageReference]
     public let codeRanges: [CodeRange]
+    public let diagrams: [DiagramReference]
     /// Footnote fragment (`fn-<label>`) → id of the block holding its definition.
     public let footnoteBlockIDs: [String: String]
     let isDark: Bool
@@ -68,6 +76,14 @@ public struct NativeMarkdownDocument: @unchecked Sendable {
             result.addAttribute(.attachment, value: attachment,
                                 range: NSRange(location: image.range.location - range.location, length: image.range.length))
         }
+        for diagram in diagrams where NSLocationInRange(diagram.range.location, range) {
+            let attachment = NSTextAttachment()
+            attachment.attachmentCell = DiagramCell(
+                kind: diagram.kind, source: diagram.source, fontSize: diagram.fontSize,
+                fill: NSColor(theme.codeCardFill), scale: scale)
+            result.addAttribute(.attachment, value: attachment,
+                                range: NSRange(location: diagram.range.location - range.location, length: diagram.range.length))
+        }
         return result
     }
 
@@ -90,18 +106,20 @@ public struct NativeMarkdownDocument: @unchecked Sendable {
 
     private static func make(source: String, blocks: [Block], document parsed: Markdown.Document?, theme: Theme, documentURL: URL?, metadataExpanded: Bool, expanded: Set<String>?, cancellable: Bool) -> Self? {
         if cancellable && Task<Never, Never>.isCancelled { return nil }
-        var writer = Writer(theme: theme, documentURL: documentURL)
-        writer.expanded = expanded
         let normalized = source.utf8.contains(UInt8(ascii: "\r")) ? source.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n") : source
+        let allLines = normalized.split(separator: "\n", omittingEmptySubsequences: false)
         let lineOffset = MarkdownParser.bodyLineOffset(in: normalized)
-        let body = lineOffset == 0 ? normalized : normalized.split(separator: "\n", omittingEmptySubsequences: false).dropFirst(lineOffset).joined(separator: "\n")
+        let bodyLines = Array(allLines.dropFirst(lineOffset))
+        let body = lineOffset == 0 ? normalized : bodyLines.joined(separator: "\n")
+        var writer = Writer(theme: theme, documentURL: documentURL, lines: bodyLines)
+        writer.expanded = expanded
         if lineOffset > 0 {
-            let metadata = normalized.split(separator: "\n", omittingEmptySubsequences: false).prefix(lineOffset).dropFirst().dropLast().joined(separator: "\n")
+            let metadata = allLines.prefix(lineOffset).dropFirst().dropLast().joined(separator: "\n")
             if let block = blocks.first, block.kind == .frontmatter {
                 let start = writer.output.length
                 let open = expanded.map { $0.contains("metadata") } ?? metadataExpanded
                 // The body's leading H1, so the summary row doesn't repeat it as the title.
-                let firstLine = body.split(separator: "\n").first { !$0.allSatisfy(\.isWhitespace) }
+                let firstLine = bodyLines.first { !$0.allSatisfy(\.isWhitespace) }
                 let heading = firstLine.flatMap { $0.hasPrefix("# ") ? String($0.dropFirst(2)).trimmingCharacters(in: .whitespaces) : nil }
                 writer.renderFrontmatter(metadata, expanded: open, showAll: expanded?.contains("metadata-all") ?? true, heading: heading)
                 writer.record(block: block, sourceLine: -1, start: start)
@@ -139,18 +157,19 @@ public struct NativeMarkdownDocument: @unchecked Sendable {
             let imageStart = writer.images.count
             let checkboxStart = writer.checkboxes.count
             let codeStart = writer.codeRanges.count
+            let diagramStart = writer.diagrams.count
             writer.currentBlockID = block?.id
             writer.openTags = []
             // Inside a collapsed <details>: only HTML blocks run, so the closing tag is still seen.
             if !writer.hidden || child is HTMLBlock { writer.renderBlock(child, blockStartLine: startLine, depth: 0) }
             if let block {
                 writer.record(block: block, sourceLine: startLine, start: start,
-                              imageStart: imageStart, checkboxStart: checkboxStart, codeStart: codeStart)
+                              imageStart: imageStart, checkboxStart: checkboxStart, codeStart: codeStart, diagramStart: diagramStart)
             }
         }
         renderTags(before: .max)
         if cancellable && Task<Never, Never>.isCancelled { return nil }
-        return Self(attributedString: writer.output.copy() as! NSAttributedString, blockRanges: writer.ranges, checkboxes: writer.checkboxes, images: writer.images, codeRanges: writer.codeRanges, footnoteBlockIDs: writer.footnoteBlockIDs, isDark: theme.colorScheme == .dark, scale: theme.scale, documentURL: documentURL)
+        return Self(attributedString: writer.output.copy() as! NSAttributedString, blockRanges: writer.ranges, checkboxes: writer.checkboxes, images: writer.images, codeRanges: writer.codeRanges, diagrams: writer.diagrams, footnoteBlockIDs: writer.footnoteBlockIDs, isDark: theme.colorScheme == .dark, scale: theme.scale, documentURL: documentURL)
     }
 
     /// One changed span keeps TextKit's existing laid-out viewport intact on reload.
@@ -198,11 +217,14 @@ public struct NativeMarkdownDocument: @unchecked Sendable {
 private struct Writer {
     let theme: Theme
     let documentURL: URL?
+    /// Body source lines, for blocks whose meaning depends on raw text (`$$` math).
+    let lines: [Substring]
     let output = NSMutableAttributedString(string: "")
     var ranges: [NativeMarkdownDocument.BlockRange] = []
     var checkboxes: [NativeMarkdownDocument.Checkbox] = []
     var images: [NativeMarkdownDocument.ImageReference] = []
     var codeRanges: [NativeMarkdownDocument.CodeRange] = []
+    var diagrams: [NativeMarkdownDocument.DiagramReference] = []
     var currentBlockID: String?
     var footnoteBlockIDs: [String: String] = [:]
     var footnoteNumbers: [String: Int] = [:]
@@ -231,9 +253,10 @@ private struct Writer {
     struct PlainKey: Hashable { let font: NSFont, color: NSColor }
     var secondary: NSColor { .secondaryLabelColor }
 
-    init(theme: Theme, documentURL: URL?) {
+    init(theme: Theme, documentURL: URL?, lines: [Substring]) {
         self.theme = theme
         self.documentURL = documentURL
+        self.lines = lines
         bodyFont = .systemFont(ofSize: theme.bodySize * theme.scale)
         headingFonts = Self.headingSpecs.map { .systemFont(ofSize: $0.0 * theme.scale, weight: .semibold) }
         codeFont = .monospacedSystemFont(ofSize: 13.5 * theme.scale, weight: .regular)
@@ -255,7 +278,7 @@ private struct Writer {
     let indentStep: CGFloat = 26
 
     mutating func record(block: Block, sourceLine: Int, start: Int,
-                         imageStart: Int = 0, checkboxStart: Int = 0, codeStart: Int = 0) {
+                         imageStart: Int = 0, checkboxStart: Int = 0, codeStart: Int = 0, diagramStart: Int = 0) {
         let range = NSRange(location: start, length: output.length - start)
         var links: [String] = []
         output.enumerateAttribute(.link, in: range) { value, part, _ in
@@ -264,6 +287,7 @@ private struct Writer {
         let imageValues = images[imageStart...].map { "\($0.range.location - start):\($0.alt):\($0.url?.absoluteString ?? "")" }
         let marks = checkboxes[checkboxStart...].map { $0.checked ? "x" : "o" }
             + codeRanges[codeStart...].map { "code:\($0.language ?? "")" }
+            + diagrams[diagramStart...].map { "\($0.kind):\($0.source)" }
         ranges.append(.init(id: block.id, sourceLine: sourceLine, range: range, renderedText: output.mutableString.substring(with: range), links: links, images: imageValues, marks: marks))
     }
 
@@ -353,6 +377,10 @@ private struct Writer {
                 output.addAttribute(.kern, value: size * theme.scale * tracking, range: NSRange(location: start, length: output.length - start))
             }
             endParagraph(from: start, style: style(font, lineHeight: lineHeight, before: before, after: after, indent: indent), font: font)
+        case let code as CodeBlock where ["mermaid", "math", "latex", "tex"].contains(code.language?.lowercased()):
+            let text = code.code.trimmingCharacters(in: .whitespacesAndNewlines)
+            let kind: DiagramRenderer.Kind = code.language?.lowercased() == "mermaid" ? .mermaid : .displayMath
+            renderDiagram(text, kind: kind, indent: indent)
         case let code as CodeBlock:
             let mono = codeFont
             let block = TypesetTextBlock(.code(language: code.language), color: NSColor(theme.codeCardFill), scale: theme.scale)
@@ -443,10 +471,55 @@ private struct Writer {
         case let paragraph as Paragraph where (paragraph.child(at: 0) as? Markdown.Text)?.string.hasPrefix("[^") == true
             && footnoteDefinition(in: Array(paragraph.children), at: 0) != nil:
             renderFootnoteDefinitions(paragraph, indent: indent)
+        case let paragraph as Paragraph where sourceText(of: paragraph).flatMap(NativeMarkdownMath.displayTeX) != nil:
+            renderDiagram(NativeMarkdownMath.displayTeX(sourceText(of: paragraph)!)!, kind: .displayMath, indent: indent)
         default:
             let start = output.length
             renderInline(node, font: bodyFont)
             endParagraph(from: start, style: style(bodyFont, lineHeight: theme.bodyLineHeight, indent: indent))
+        }
+    }
+
+    /// A paragraph holding one diagram/formula stand-in; DiagramRenderer fills it in later.
+    mutating func renderDiagram(_ source: String, kind: DiagramRenderer.Kind, indent: CGFloat) {
+        let start = output.length
+        appendDiagram(source, kind: kind, font: bodyFont, copyText: source)
+        let p = style(bodyFont, lineHeight: theme.bodyLineHeight, indent: indent)
+        if kind == .displayMath { p.alignment = .center }
+        endParagraph(from: start, style: p)
+    }
+
+    mutating func appendDiagram(_ source: String, kind: DiagramRenderer.Kind, font: NSFont, color: NSColor = .labelColor, link: URL? = nil, copyText: String? = nil) {
+        let start = output.length
+        let attachment = NSTextAttachment()
+        var extras: [NSAttributedString.Key: Any] = [.attachment: attachment]
+        if let link { extras[.link] = link }
+        if let copyText { extras[.typesetCopy] = copyText }
+        append("\u{FFFC}", font: font, color: color, extras: extras)
+        diagrams.append(.init(range: NSRange(location: start, length: 1), source: source, kind: kind, fontSize: font.pointSize))
+    }
+
+    /// The node's raw source, from its first column (so `\\` and `*` in TeX survive).
+    func sourceText(of node: any Markup) -> String? {
+        guard let range = node.range else { return nil }
+        let first = range.lowerBound.line - 1, last = range.upperBound.line - 1
+        guard first >= 0, last < lines.count, first <= last else { return nil }
+        var slice = lines[first...last].map(String.init)
+        slice[0] = String(decoding: slice[0].utf8.dropFirst(max(0, range.lowerBound.column - 1)), as: UTF8.self)
+        return slice.joined(separator: "\n")
+    }
+
+    mutating func renderText(_ string: String, font: NSFont, color: NSColor, link: URL?) {
+        for piece in NativeMarkdownMath.split(string) {
+            switch piece {
+            case .text(let text):
+                let start = output.length
+                append(text, font: font, color: color, extras: link.map { [.link: $0] } ?? [:])
+                if link == nil, Self.mayContainAutolink(text) { linkBareURLs(in: text, at: start) }
+                if mdx { renderMDXExpressions(in: text, at: start, font: font) }
+            case .math(let tex):
+                appendDiagram(tex, kind: .inlineMath, font: font, color: color, link: link)
+            }
         }
     }
 
@@ -513,10 +586,7 @@ private struct Writer {
 
     mutating func renderInline(_ node: any Markup, font: NSFont, color: NSColor = .labelColor, link: URL? = nil) {
         if let text = node as? Markdown.Text {
-            let start = output.length
-            append(text.string, font: font, color: color, extras: link.map { [.link: $0] } ?? [:])
-            if link == nil, Self.mayContainAutolink(text.string) { linkBareURLs(in: text.string, at: start) }
-            if mdx { renderMDXExpressions(in: text.string, at: start, font: font) }
+            renderText(text.string, font: font, color: color, link: link)
             return
         }
         if let code = node as? InlineCode {
@@ -548,9 +618,28 @@ private struct Writer {
         if node is Emphasis { childFont = self.font(font, adding: .italic) }
         let childLink = (node as? Markdown.Link).flatMap { resolvedURL($0.destination) } ?? link
         let start = output.length
-        for child in node.children {
-            let childColor = childLink == nil ? color : NSColor(theme.linkColor)
-            if let text = (child as? Markdown.Text)?.string, !footnoteNumbers.isEmpty, text.contains("[^") {
+        let children = Array(node.children)
+        let childColor = childLink == nil ? color : NSColor(theme.linkColor)
+        // GitHub's $`…`$ form: Markdown sees "$", inline code, "$".
+        func isMathCode(_ i: Int) -> Bool {
+            i > 0 && i + 1 < children.count && children[i] is InlineCode
+                && (children[i - 1] as? Markdown.Text)?.string.hasSuffix("$") == true
+                && (children[i + 1] as? Markdown.Text)?.string.hasPrefix("$") == true
+        }
+        for (i, child) in children.enumerated() {
+            if isMathCode(i), let code = child as? InlineCode {
+                appendDiagram(code.code, kind: .inlineMath, font: childFont, color: childColor, link: childLink)
+            } else if let text = child as? Markdown.Text, isMathCode(i - 1) || isMathCode(i + 1) {
+                var string = Substring(text.string)
+                if isMathCode(i - 1) { string = string.dropFirst() }
+                if isMathCode(i + 1) { string = string.dropLast() }
+                let trimmed = String(string)
+                if !footnoteNumbers.isEmpty, trimmed.contains("[^") {
+                    renderFootnoteText(trimmed, font: childFont, color: childColor, link: childLink)
+                } else {
+                    renderText(trimmed, font: childFont, color: childColor, link: childLink)
+                }
+            } else if let text = (child as? Markdown.Text)?.string, !footnoteNumbers.isEmpty, text.contains("[^") {
                 renderFootnoteText(text, font: childFont, color: childColor, link: childLink)
             } else {
                 renderInline(child, font: childFont, color: childColor, link: childLink)
@@ -678,11 +767,7 @@ private struct Writer {
         }
         func dateText(_ v: FrontmatterValue?) -> String? {
             guard case .date(let date, _)? = v else { return nil }
-            let f = DateFormatter()
-            f.dateStyle = .medium
-            f.timeStyle = .none
-            f.timeZone = TimeZone(identifier: "UTC")
-            return f.string(from: date)
+            return date.formatted(Date.FormatStyle(date: .abbreviated, time: .none, locale: .current, timeZone: .gmt))
         }
 
         // Summary row
@@ -1092,7 +1177,7 @@ private struct Writer {
     }
 
     /// Returns false for tags it doesn't know, which the caller shows raw.
-    mutating func renderTag(_ raw: String, font: NSFont, color: NSColor, link: URL?) -> Bool {
+    mutating func renderTag(_ raw: String, font: NSFont, color: NSColor, link: URL?, inline: Bool = false) -> Bool {
         if raw.hasPrefix("<!--") { return true }
         guard let tag = Self.tag(raw), Self.inlineTags.contains(tag.name) else { return false }
         switch tag.name {
@@ -1101,7 +1186,7 @@ private struct Writer {
             if !tag.closing {
                 let anchor = openTags.last { $0.name == "a" }
                 appendImage(source: Self.attribute("src", in: tag.attributes), alt: Self.attribute("alt", in: tag.attributes) ?? "", font: font,
-                            link: link ?? anchor?.link, inline: link != nil || anchor != nil)
+                            link: link ?? anchor?.link, inline: inline || link != nil || anchor != nil)
             }
         default:
             if !tag.closing { openTags.append((tag.name, output.length, Self.attribute("href", in: tag.attributes).flatMap(resolvedURL))); break }
@@ -1155,7 +1240,7 @@ private struct Writer {
             text(raw[last..<match.range.lowerBound])
             last = match.range.upperBound
             guard let tag = Self.tag(String(match.output)), Self.blockTags.contains(tag.name) else {
-                if !hidden { _ = renderTag(String(match.output), font: bodyFont, color: .labelColor, link: nil) }
+                if !hidden { _ = renderTag(String(match.output), font: bodyFont, color: .labelColor, link: nil, inline: summaryStart != nil) }
                 continue
             }
             switch (tag.name, tag.closing) {
@@ -1224,10 +1309,10 @@ extension NSFont {
 }
 
 extension NSAttributedString.Key {
-    static let typesetCopy = NSAttributedString.Key("com.dee.typeset.copy")
-    static let typesetMetadata = NSAttributedString.Key("com.dee.typeset.metadata")
+    static let typesetCopy = NSAttributedString.Key("com.deeflect.typeset.copy")
+    static let typesetMetadata = NSAttributedString.Key("com.deeflect.typeset.metadata")
     /// On a toggle chevron: whether it points down (open). The reading view rotates it on toggle.
-    static let typesetChevronOpen = NSAttributedString.Key("com.dee.typeset.chevron-open")
+    static let typesetChevronOpen = NSAttributedString.Key("com.deeflect.typeset.chevron-open")
     /// Keycap stroke color on `<kbd>` runs; `ChipLayoutManager` draws the cap.
-    static let typesetKeycap = NSAttributedString.Key("com.dee.typeset.keycap")
+    static let typesetKeycap = NSAttributedString.Key("com.deeflect.typeset.keycap")
 }

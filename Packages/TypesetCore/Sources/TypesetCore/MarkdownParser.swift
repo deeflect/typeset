@@ -1,6 +1,18 @@
 import Foundation
 import Markdown
 
+/// A parsed document paired with its top-level `[Block]` model so renderers
+/// can reuse the AST across concurrency boundaries without re-parsing.
+public struct ParsedMarkdown: @unchecked Sendable {
+    public let blocks: [Block]
+    public let document: Document
+
+    public init(blocks: [Block], document: Document) {
+        self.blocks = blocks
+        self.document = document
+    }
+}
+
 /// Parses raw Markdown text into a flat `[Block]` model.
 ///
 /// Frontmatter (a leading `---`/`---` YAML block) is split off before
@@ -16,6 +28,13 @@ public enum MarkdownParser {
 
     /// `parse`, plus the cmark document of the body, so a renderer can reuse it instead of parsing again.
     public static func parseDocument(_ text: String, mdx: Bool = false) -> (blocks: [Block], document: Document) {
+        let parsed = parseDocumentResult(text, mdx: mdx)
+        return (parsed.blocks, parsed.document)
+    }
+
+    /// `Sendable` variant of `parseDocument` for passing the parsed AST from
+    /// reload/controller tasks into off-main renderers.
+    public static func parseDocumentResult(_ text: String, mdx: Bool = false) -> ParsedMarkdown {
         let text = normalizingLineEndings(text)
         var ordinal = 0
         var blocks: [Block] = []
@@ -28,7 +47,7 @@ public enum MarkdownParser {
 
         let parsed = parseBodyAndDocument(body, startOrdinal: ordinal, lineOffset: 0, mdx: mdx)
         blocks.append(contentsOf: parsed.blocks)
-        return (Block.assigningOccurrenceIndices(to: blocks), parsed.document)
+        return ParsedMarkdown(blocks: Block.assigningOccurrenceIndices(to: blocks), document: parsed.document)
     }
 
     /// The one place that decides MDX mode: by file extension.
@@ -120,15 +139,7 @@ public enum MarkdownParser {
             lines[$0].range(of: #"^ {0,3}\[\^[^\]\s]+\]:"#, options: .regularExpression) != nil
         }
         guard !candidates.isEmpty else { return body }
-        let original = Document(parsing: body)
-        var codeLines: Set<Int> = []
-        func collectCode(_ node: any Markup) {
-            if (node is CodeBlock || node is InlineCode || node is HTMLBlock), let range = node.range {
-                codeLines.formUnion((range.lowerBound.line - 1)...(range.upperBound.line - 1))
-            }
-            for child in node.children { collectCode(child) }
-        }
-        collectCode(original)
+        let codeLines = nonProseLineIndices(in: lines)
         var prepared = lines.map(String.init)
         for line in candidates where !codeLines.contains(line) {
             if let separator = prepared[line].range(of: "]:") {
@@ -136,6 +147,133 @@ public enum MarkdownParser {
             }
         }
         return prepared.joined(separator: "\n")
+    }
+
+    /// Linear single-pass scan for lines inside fenced code, indented code, HTML
+    /// comments/raw blocks, or multi-line inline code spans so `bodyForParsing`
+    /// avoids running a full extra cmark parse on footnote documents.
+    private static func nonProseLineIndices(in lines: [Substring]) -> Set<Int> {
+        var result: Set<Int> = []
+        var fence: (char: UInt8, length: Int)?
+        var inIndentedCode = false
+        var prevBlank = true
+        var inHTMLComment = false
+        var rawHTMLTag: String?
+        var inlineTicks: Int?
+        var pendingInlineLines: [Int] = []
+
+        for (index, line) in lines.enumerated() {
+            let bytes = Array(line.utf8)
+            let leadingSpaces = bytes.prefix(while: { $0 == UInt8(ascii: " ") }).count
+            let isBlank = bytes.allSatisfy { $0 == UInt8(ascii: " ") || $0 == UInt8(ascii: "\t") }
+
+            if let open = fence {
+                result.insert(index)
+                if leadingSpaces <= 3, let run = fenceMarker(bytes, from: leadingSpaces),
+                   run.char == open.char, run.length >= open.length,
+                   bytes[(leadingSpaces + run.length)...].allSatisfy({ $0 == UInt8(ascii: " ") || $0 == UInt8(ascii: "\t") }) {
+                    fence = nil
+                }
+                prevBlank = false
+                continue
+            }
+
+            if isBlank {
+                inlineTicks = nil
+                pendingInlineLines.removeAll(keepingCapacity: true)
+                prevBlank = true
+                if inIndentedCode { result.insert(index) }
+                continue
+            }
+
+            if inHTMLComment {
+                result.insert(index)
+                if line.contains("-->") { inHTMLComment = false }
+                prevBlank = false
+                continue
+            }
+
+            if let tag = rawHTMLTag {
+                result.insert(index)
+                if line.lowercased().contains("</\(tag)>") { rawHTMLTag = nil }
+                prevBlank = false
+                continue
+            }
+
+            let isIndented = leadingSpaces >= 4 || bytes.first == UInt8(ascii: "\t")
+            if isIndented && (prevBlank || inIndentedCode) && inlineTicks == nil {
+                inIndentedCode = true
+                result.insert(index)
+                prevBlank = false
+                continue
+            }
+            inIndentedCode = false
+
+            if leadingSpaces <= 3, let open = fenceMarker(bytes, from: leadingSpaces), inlineTicks == nil {
+                let rest = bytes[(leadingSpaces + open.length)...]
+                if open.char == UInt8(ascii: "~") || !rest.contains(UInt8(ascii: "`")) {
+                    fence = open
+                    result.insert(index)
+                    prevBlank = false
+                    continue
+                }
+            }
+
+            if leadingSpaces <= 3, bytes.dropFirst(leadingSpaces).starts(with: "<!--".utf8), inlineTicks == nil {
+                result.insert(index)
+                if !line.contains("-->") { inHTMLComment = true }
+                prevBlank = false
+                continue
+            }
+
+            if leadingSpaces <= 3, inlineTicks == nil {
+                let trimmedLower = String(decoding: bytes.dropFirst(leadingSpaces), as: UTF8.self).lowercased()
+                for tag in ["pre", "script", "style"] where trimmedLower.hasPrefix("<\(tag)>") || trimmedLower.hasPrefix("<\(tag) ") {
+                    result.insert(index)
+                    if !trimmedLower.contains("</\(tag)>") { rawHTMLTag = tag }
+                    break
+                }
+                if rawHTMLTag != nil { prevBlank = false; continue }
+            }
+
+            // Scan inline backtick runs inside the paragraph.
+            var i = 0
+            var lineStartedInsideInline = inlineTicks != nil
+            while i < bytes.count {
+                if bytes[i] == UInt8(ascii: "`") {
+                    let start = i
+                    while i < bytes.count, bytes[i] == UInt8(ascii: "`") { i += 1 }
+                    let runLen = i - start
+                    if let target = inlineTicks {
+                        if runLen == target {
+                            for lineIdx in pendingInlineLines { result.insert(lineIdx) }
+                            if lineStartedInsideInline { result.insert(index) }
+                            pendingInlineLines.removeAll(keepingCapacity: true)
+                            inlineTicks = nil
+                            lineStartedInsideInline = false
+                        }
+                    } else {
+                        inlineTicks = runLen
+                    }
+                } else {
+                    i += 1
+                }
+            }
+            if inlineTicks != nil {
+                pendingInlineLines.append(index)
+            }
+            prevBlank = false
+        }
+        return result
+    }
+
+    private static func fenceMarker(_ bytes: [UInt8], from offset: Int) -> (char: UInt8, length: Int)? {
+        guard offset < bytes.count else { return nil }
+        let ch = bytes[offset]
+        guard ch == UInt8(ascii: "`") || ch == UInt8(ascii: "~") else { return nil }
+        var len = 0
+        while offset + len < bytes.count, bytes[offset + len] == ch { len += 1 }
+        return len >= 3 ? (ch, len) : nil
     }
 
     // MARK: - Frontmatter

@@ -14,10 +14,9 @@ struct QuickOpenView: View {
 
     /// Live list in folder mode; otherwise a one-off scan of the file's folder.
     private var files: [FolderIndex.Entry] { model.folder?.files ?? scanned }
-    private var results: [FolderIndex.Entry] { FolderIndex.rank(query, in: files) }
 
     var body: some View {
-        let results = results
+        let results = FolderIndex.rank(query, in: files)
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
@@ -62,7 +61,7 @@ struct QuickOpenView: View {
             if model.folder == nil, let root = model.quickOpenRoot {
                 scanned = await Task.detached { FolderIndex.scan(root) }.value
             }
-            selection = results.first?.url
+            selection = FolderIndex.rank(query, in: files).first?.url
             fieldFocused = true
         }
     }

@@ -188,6 +188,8 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
         private var loadedImageLocations: Set<Int> = []
         private var loadedImages: [Int: NativeMarkdownImages.Decoded] = [:]
         private var loadedCodeLocations: Set<Int> = []
+        private var loadedDiagramLocations: Set<Int> = []
+        private var renderedDiagrams: [Int: DiagramRenderer.Result] = [:]
         private var highlightIsDark = false
         private var pendingVisibleID: String?
         private var reportedVisibleID: String?
@@ -249,13 +251,17 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
             view.ticks = []
             document = input.document
             updateMarkers()
-            // Loaded images outside the replaced span stay in the text storage; keep them (shifted) so they don't reload and fade in again.
+            // Loaded images and diagrams outside the replaced span stay in the text storage; keep them (shifted) so they don't reload and fade in again.
             var keptImages: [Int: NativeMarkdownImages.Decoded] = [:]
+            var keptDiagrams: [Int: DiagramRenderer.Result] = [:]
             if let old {
                 let splice = input.document.replacementRanges(from: old)
                 let delta = splice.new.length - splice.old.length
                 for (location, image) in loadedImages where location < splice.old.location || location >= NSMaxRange(splice.old) {
                     keptImages[location < splice.old.location ? location : location + delta] = image
+                }
+                for (location, result) in renderedDiagrams where location < splice.old.location || location >= NSMaxRange(splice.old) {
+                    keptDiagrams[location < splice.old.location ? location : location + delta] = result
                 }
                 view.textStorage?.replaceCharacters(in: splice.old,
                     with: input.document.materializedAttributedString(in: splice.new))
@@ -280,6 +286,8 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
             loadedImages = keptImages
             loadedImageLocations = Set(keptImages.keys)
             loadedCodeLocations.removeAll()
+            renderedDiagrams = keptDiagrams
+            loadedDiagramLocations = Set(keptDiagrams.keys)
             highlightIsDark = input.theme.colorScheme == .dark
             scrolled()
             DispatchQueue.main.async { [weak self] in self?.scrolled() }
@@ -307,6 +315,7 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
             }
             loadVisibleImages()
             loadVisibleHighlights()
+            loadVisibleDiagrams()
         }
 
         fileprivate func click(at index: Int) -> Bool {
@@ -323,6 +332,10 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
             return false
         }
         fileprivate func openImage(at index: Int) -> Bool {
+            if let diagram = item(document?.diagrams, at: index, range: \.range), diagram.kind == .mermaid {
+                if case .image(let image, _, _)? = renderedDiagrams[diagram.range.location] { onImageOpen?(image) }
+                return true
+            }
             if let image = item(document?.images, at: index, range: \.range), let url = image.url {
                 if let actual = loadedImages[image.range.location]?.image {
                     onImageOpen?(actual)
@@ -348,8 +361,12 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
                 || (onCheckbox != nil && checkbox(at: index) != nil)
                 || imageCursor(at: index) == .pointingHand
         }
-        /// R06: a loaded image zooms (lightbox), a blocked card asks for access; other cards are inert.
+        /// R06: a loaded image or Mermaid diagram zooms (lightbox), a blocked card asks for access; other cards are inert.
         fileprivate func imageCursor(at index: Int) -> NSCursor? {
+            if let diagram = item(document?.diagrams, at: index, range: \.range), diagram.kind == .mermaid,
+               case .image? = renderedDiagrams[diagram.range.location] {
+                return .zoomIn
+            }
             guard let image = item(document?.images, at: index, range: \.range) else { return nil }
             if loadedImages[image.range.location]?.image != nil { return .zoomIn }
             let cell = (view?.textStorage?.attribute(.attachment, at: image.range.location, effectiveRange: nil) as? NSTextAttachment)?.attachmentCell
@@ -480,6 +497,33 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
             }
         }
 
+        private func loadVisibleDiagrams() {
+            guard let view, let diagrams = document?.diagrams else { return }
+            let top = view.characterIndexForInsertion(at: NSPoint(x: view.textContainerInset.width, y: view.visibleRect.minY))
+            let bottom = view.characterIndexForInsertion(at: NSPoint(x: view.textContainerInset.width, y: view.visibleRect.maxY + view.visibleRect.height))
+            let current = generation
+            let isDark = document?.isDark == true
+            for diagram in diagrams[firstIndex(diagrams, endingAfter: top, range: \.range)...] {
+                guard diagram.range.location <= bottom else { break }
+                let range = diagram.range
+                guard loadedDiagramLocations.insert(range.location).inserted else { continue }
+                let id = nextTaskID
+                nextTaskID += 1
+                tasks[id] = Task { [weak self] in
+                    defer { self?.tasks[id] = nil }
+                    let rendered = await DiagramRenderer.shared.render(diagram.source, kind: diagram.kind, isDark: isDark, fontSize: diagram.fontSize)
+                    guard let self, self.generation == current, let view = self.view,
+                          range.location < (view.textStorage?.length ?? 0) else { return }
+                    self.renderedDiagrams[range.location] = rendered
+                    let width = max(120, view.textContainer?.containerSize.width ?? 600)
+                    let existing = view.textStorage?.attribute(.attachment, at: range.location, effectiveRange: nil) as? NSTextAttachment
+                    if let attachment = diagram.attachment(for: rendered, maxWidth: width, existing: existing, isDark: isDark) {
+                        view.textStorage?.addAttribute(.attachment, value: attachment, range: range)
+                    }
+                }
+            }
+        }
+
         private func cancelImages() {
             generation += 1
             tasks.values.forEach { $0.cancel() }
@@ -493,6 +537,14 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
             for (location, image) in loadedImages where location < (view.textStorage?.length ?? 0) {
                 view.textStorage?.addAttribute(.attachment, value: NativeMarkdownImages.attachment(for: image, maxWidth: width, isDark: document?.isDark == true), range: NSRange(location: location, length: 1))
             }
+            if let diagrams = document?.diagrams {
+                let isDark = document?.isDark == true
+                for diagram in diagrams where diagram.range.location < (view.textStorage?.length ?? 0) {
+                    guard let result = renderedDiagrams[diagram.range.location],
+                          let attachment = diagram.attachment(for: result, maxWidth: width, existing: nil, isDark: isDark) else { continue }
+                    view.textStorage?.addAttribute(.attachment, value: attachment, range: diagram.range)
+                }
+            }
             scrolled()
         }
         fileprivate func retryImages() {
@@ -500,8 +552,11 @@ public struct NativeMarkdownReadingView: NSViewRepresentable {
             loadedImageLocations.removeAll()
             loadedImages.removeAll()
             loadedCodeLocations.removeAll()
+            loadedDiagramLocations.removeAll()
+            renderedDiagrams.removeAll()
             loadVisibleImages()
             loadVisibleHighlights()
+            loadVisibleDiagrams()
         }
         fileprivate func cancel() {
             cancelImages()
@@ -915,6 +970,10 @@ private final class ReadingTextView: NSTextView {
         var replacements: [(NSRange, String)] = []
         for image in coordinator?.document?.images ?? [] where NSLocationInRange(image.range.location, selected) {
             replacements.append((image.range, image.alt.isEmpty ? "Image" : image.alt))
+        }
+        for diagram in coordinator?.document?.diagrams ?? [] where NSLocationInRange(diagram.range.location, selected) {
+            let text = diagram.kind == .inlineMath ? "$\(diagram.source)$" : diagram.source
+            replacements.append((diagram.range, text))
         }
         for box in coordinator?.document?.checkboxes ?? [] where NSLocationInRange(box.range.location, selected) {
             replacements.append((NSRange(location: box.range.location, length: min(box.range.length, NSMaxRange(selected) - box.range.location)), box.checked ? "[x] " : "[ ] "))

@@ -5,7 +5,7 @@ subtitle: Read Markdown on your Mac
 
 # Welcome to Typeset
 
-Open a Markdown file to read it in a native Mac window. Typeset renders headings, tables, task lists, links, images, and fenced code blocks. Files stay on your Mac.
+Open a Markdown file to read it in a native Mac window. Typeset renders headings, tables, task lists, links, images, fenced code blocks, Mermaid diagrams, and LaTeX math equations completely offline. Files stay on your Mac.
 
 ## Open and navigate
 
@@ -26,4 +26,4 @@ Press `⌘E` to edit the Markdown source, then `⌘S` to save or `⌘E` to retur
 
 Use the File menu to export as PDF or Rich Text, or print. Select text and use `⇧⌘C` to copy it as Rich Text. The Help menu has the privacy policy, support, and third-party notices.
 
-Quick Look in Finder can show the same rendered Markdown without opening a Typeset window.
+Quick Look previews and Finder thumbnails show the same rendered Markdown without opening a Typeset window.

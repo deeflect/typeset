@@ -35,8 +35,7 @@ public struct Block: Identifiable, Equatable, Sendable {
     /// for now, as the plumbing-proof render payload).
     public let rawText: String
     /// 0-based global position counter assigned during parsing. Retained
-    /// for internal ordering/splicing (`IncrementalReparse`,
-    /// `ProgressiveParser`'s ordinal continuity across chunks) — it is
+    /// for internal ordering/splicing (`IncrementalReparse`) — it is
     /// NOT part of `id` anymore (see `occurrenceIndex`), since baking
     /// global position into identity is exactly what made every
     /// downstream block's `id` change on an unrelated edit.

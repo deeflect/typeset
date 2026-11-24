@@ -15,6 +15,7 @@ final class DocumentReloadController {
     let url: URL
 
     private(set) var blocks: [Block] = []
+    private(set) var parsedDocument: ParsedMarkdown?
     private(set) var loadError: String?
     private(set) var isLoading = true
     /// True once the file has been missing for longer than the watcher's
@@ -176,23 +177,25 @@ final class DocumentReloadController {
         let fileURL = url
         initialTask = Task.detached(priority: .userInitiated) { [weak self] in
             guard !Task.isCancelled else { return }
-            let result = Result { () -> (DocumentFileIO.Snapshot, [Block]) in
+            let result = Result { () -> (DocumentFileIO.Snapshot, ParsedMarkdown) in
                 let didAccess = fileURL.startAccessingSecurityScopedResource()
                 defer { if didAccess { fileURL.stopAccessingSecurityScopedResource() } }
                 let snapshot = try DocumentFileIO.read(fileURL)
                 try Task.checkCancellation()
-                return (snapshot, MarkdownParser.parse(snapshot.text, mdx: MarkdownParser.isMDX(fileURL)))
+                return (snapshot, MarkdownParser.parseDocumentResult(snapshot.text, mdx: MarkdownParser.isMDX(fileURL)))
             }
             await MainActor.run { [weak self] in
                 guard let self, !self.isStopped, self.reloadGeneration == generation else { return }
                 self.isLoading = false
                 switch result {
-                case .success(let (snapshot, blocks)):
+                case .success(let (snapshot, parsed)):
                     self.diskSnapshot = snapshot
                     self.lastText = snapshot.text
-                    self.blocks = blocks
+                    self.blocks = parsed.blocks
+                    self.parsedDocument = parsed
                     self.loadError = nil
                 case .failure(let error):
+                    self.parsedDocument = nil
                     self.loadError = "Couldn\u{2019}t open \(fileURL.lastPathComponent): \(error.localizedDescription)"
                 }
                 self.onInitialLoaded?()
@@ -304,6 +307,7 @@ final class DocumentReloadController {
             pulsedBlockIDs.formUnion(changedIDs)
         }
         blocks = result.newBlocks
+        parsedDocument = result.parsedDocument
 
         requestedBlockID = followModeEnabled ? (firstChangedID ?? anchorTarget) : anchorTarget
         onDocumentChanged?()
@@ -416,7 +420,9 @@ final class DocumentReloadController {
             reloadGeneration += 1
             diskSnapshot = saved
             lastText = editedText
-            blocks = MarkdownParser.parse(editedText, mdx: MarkdownParser.isMDX(url))
+            let parsed = MarkdownParser.parseDocumentResult(editedText, mdx: MarkdownParser.isMDX(url))
+            blocks = parsed.blocks
+            parsedDocument = parsed
             onDocumentChanged?()
             conflictState = EditConflictMachine.transition(state: conflictState, event: .bufferSettled).state
             window?.isDocumentEdited = false
@@ -495,7 +501,9 @@ final class DocumentReloadController {
             watcher?.expectOwnWrite(contents: saved.data)
             reloadGeneration += 1
             diskSnapshot = saved
-            blocks = MarkdownParser.parse(newText, mdx: MarkdownParser.isMDX(url))
+            let parsed = MarkdownParser.parseDocumentResult(newText, mdx: MarkdownParser.isMDX(url))
+            blocks = parsed.blocks
+            parsedDocument = parsed
             lastText = newText
             onDocumentChanged?()
         } catch {
@@ -521,6 +529,7 @@ private struct ReloadResult: Sendable {
     let snapshot: DocumentFileIO.Snapshot
     var newText: String { snapshot.text }
     let newBlocks: [Block]
+    let parsedDocument: ParsedMarkdown?
     let changes: [BlockChange]
 }
 
@@ -540,12 +549,20 @@ private nonisolated func computeReload(url: URL, oldText: String, oldBlocks: [Bl
     }
     guard !Task.isCancelled else { return nil }
     let newText = snapshot.text
-    let newBlocks: [Block] = newText.isEmpty
-        ? []
-        : MarkdownParser.isMDX(url)
-            // Incremental reparse is block-local; MDX containers span blocks, so reparse whole.
-            ? MarkdownParser.parse(newText, mdx: true)
-            : MarkdownParser.reparseIncremental(oldText: oldText, newText: newText, oldBlocks: oldBlocks)
+    let parsed: ParsedMarkdown?
+    let newBlocks: [Block]
+    if newText.isEmpty {
+        parsed = nil
+        newBlocks = []
+    } else if MarkdownParser.isMDX(url) {
+        // Incremental reparse is block-local; MDX containers span blocks, so reparse whole.
+        let full = MarkdownParser.parseDocumentResult(newText, mdx: true)
+        parsed = full
+        newBlocks = full.blocks
+    } else {
+        parsed = nil
+        newBlocks = MarkdownParser.reparseIncremental(oldText: oldText, newText: newText, oldBlocks: oldBlocks)
+    }
     let changes = BlockDiffer.diff(old: oldBlocks, new: newBlocks)
-    return ReloadResult(snapshot: snapshot, newBlocks: newBlocks, changes: changes)
+    return ReloadResult(snapshot: snapshot, newBlocks: newBlocks, parsedDocument: parsed, changes: changes)
 }

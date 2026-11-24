@@ -21,6 +21,26 @@ struct MarkdownParserTests {
         #expect(MarkdownParser.bodyForParsing(source) == source)
     }
 
+    @Test func tildeFenceAndHTMLCommentPreserveFootnoteMarkers() {
+        let source = """
+        Ref[^real].
+
+        ~~~markdown
+        [^tilde]: https://inside.example
+        ~~~
+
+        <!--
+        [^comment]: https://inside.example
+        -->
+
+        [^real]: https://real.example
+        """
+        let prepared = MarkdownParser.bodyForParsing(source)
+        #expect(prepared.contains("[^tilde]: https://inside.example"))
+        #expect(prepared.contains("[^comment]: https://inside.example"))
+        #expect(prepared.contains("[^real]\\: https://real.example"))
+    }
+
     @Test func frontmatterIsSplitIntoItsOwnBlock() {
         let text = """
         ---

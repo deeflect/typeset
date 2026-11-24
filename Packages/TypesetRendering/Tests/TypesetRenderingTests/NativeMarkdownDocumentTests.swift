@@ -1040,12 +1040,96 @@ extension NativeMarkdownDocumentTests {
     }
 
     func testSingleParseDocumentRendersLikeTheParsingBuild() {
-        let source = "---\ntitle: T\n---\n# H\n\nText[^1] with **bold** and [ref].\n\n[^1]: Note\n[ref]: https://example.com\n"
         let theme = Theme(colorScheme: .light, scale: 1)
-        let parsed = MarkdownParser.parseDocument(source)
-        let reused = NativeMarkdownDocument.build(source: source, blocks: parsed.blocks, document: parsed.document, theme: theme, documentURL: nil)
-        let fresh = NativeMarkdownDocument.build(source: source, blocks: MarkdownParser.parse(source), theme: theme, documentURL: nil)
-        XCTAssertEqual(reused.attributedString.string, fresh.attributedString.string) // attachments are distinct instances, so compare text
-        XCTAssertEqual(reused.blockRanges.map(\.id), fresh.blockRanges.map(\.id))
+        let cases: [(String, URL?)] = [
+            ("---\ntitle: T\n---\n# H\n\nText[^1] with **bold** and [ref].\n\n[^1]: Note\n\n[ref]: https://example.com\n", nil),
+            ("---\ntitle: T\n---\nimport { Callout } from './c'\n\n<Callout>\n[ref] inside **bold**\n</Callout>\n\n[ref]: https://example.com\n", URL(fileURLWithPath: "/tmp/post.mdx"))
+        ]
+        for (source, url) in cases {
+            let mdx = MarkdownParser.isMDX(url)
+            let parsed = MarkdownParser.parseDocument(source, mdx: mdx)
+            let reused = NativeMarkdownDocument.build(source: source, blocks: parsed.blocks, document: parsed.document, theme: theme, documentURL: url)
+            let fresh = NativeMarkdownDocument.build(source: source, blocks: MarkdownParser.parse(source, mdx: mdx), theme: theme, documentURL: url)
+            XCTAssertEqual(reused.attributedString.string, fresh.attributedString.string) // attachments are distinct instances, so compare text
+            XCTAssertEqual(reused.blockRanges.map(\.id), fresh.blockRanges.map(\.id))
+            let linkRange = (reused.attributedString.string as NSString).range(of: "ref")
+            XCTAssertNotEqual(linkRange.location, NSNotFound)
+            XCTAssertEqual((reused.attributedString.attribute(.link, at: linkRange.location, effectiveRange: nil) as? URL)?.absoluteString,
+                           "https://example.com", "mdx=\(mdx): \(reused.attributedString.string)")
+            XCTAssertEqual(reused.attributedString.attribute(.link, at: linkRange.location, effectiveRange: nil) as? URL,
+                           fresh.attributedString.attribute(.link, at: linkRange.location, effectiveRange: nil) as? URL)
+        }
+    }
+
+    @MainActor func testInlineAndDisplayMathDelimiters() {
+        typealias P = NativeMarkdownMath.Piece
+        XCTAssertEqual(NativeMarkdownMath.split("area $\\pi r^2$ here"), [P.text("area "), .math("\\pi r^2"), .text(" here")])
+        XCTAssertEqual(NativeMarkdownMath.split("costs $5 and $10 today"), [P.text("costs $5 and $10 today")])
+        XCTAssertEqual(NativeMarkdownMath.split("escaped \\$5 and $x$"), [P.text("escaped \\$5 and "), .math("x")])
+        XCTAssertEqual(NativeMarkdownMath.split("$ x$ and $x $"), [P.text("$ x$ and $x $")])
+        XCTAssertEqual(NativeMarkdownMath.split("$x$1 then $y$."), [P.text("$x$1 then "), .math("y"), .text(".")])
+        XCTAssertEqual(NativeMarkdownMath.split("$$"), [P.text("$$")])
+        XCTAssertEqual(NativeMarkdownMath.displayTeX("$$\n\\int_0^1 x\\,dx\n$$"), "\\int_0^1 x\\,dx")
+        XCTAssertNil(NativeMarkdownMath.displayTeX("$$a$$ and $$b$$"))
+
+        let source = "Inline $a^2$ and $`b_1`$ end.\n\n$$\nx \\\\ y\n$$\n"
+        let doc = render(source)
+        XCTAssertEqual(doc.diagrams.map(\.source), ["a^2", "b_1", "x \\\\ y"])
+        XCTAssertEqual(doc.diagrams.map(\.kind), [.inlineMath, .inlineMath, .displayMath])
+        XCTAssertTrue(doc.attributedString.string.hasPrefix("Inline \u{FFFC} and \u{FFFC} end."))
+        let materialized = doc.materializedAttributedString()
+        XCTAssertTrue((materialized.attribute(.attachment, at: doc.diagrams[0].range.location, effectiveRange: nil) as? NSTextAttachment)?.attachmentCell is DiagramCell)
+    }
+
+    @MainActor func testMermaidFenceRecordsPlaceholderAndSplicesOnEdit() {
+        let source = "# Flow\n\n```mermaid\ngraph TD\n  A --> B\n```\n\nAfter\n"
+        let doc = render(source)
+        XCTAssertEqual(doc.diagrams.count, 1)
+        let diagram = doc.diagrams[0]
+        XCTAssertEqual(diagram.kind, .mermaid)
+        XCTAssertEqual(diagram.source, "graph TD\n  A --> B")
+        XCTAssertEqual((doc.attributedString.string as NSString).substring(with: diagram.range), "\u{FFFC}")
+        let materialized = doc.materializedAttributedString()
+        XCTAssertTrue((materialized.attribute(.attachment, at: diagram.range.location, effectiveRange: nil) as? NSTextAttachment)?.attachmentCell is DiagramCell)
+        XCTAssertTrue(doc.codeRanges.isEmpty)
+
+        let edited = source.replacingOccurrences(of: "B", with: "C")
+        let next = render(edited)
+        XCTAssertGreaterThan(next.replacementRanges(from: doc).new.length, 0)
+    }
+
+    @MainActor func testOfflineDiagramAndMathRenderer() async {
+        let renderer = DiagramRenderer.shared
+        let flow = "graph LR\n  A[Start] --> B{Ok?}\n  B -->|yes| C[Done]"
+        guard case .image(let image, let png, _) = await renderer.render(flow, kind: .mermaid, isDark: false, fontSize: 16) else {
+            return XCTFail("flowchart failed")
+        }
+        XCTAssertGreaterThan(image.size.width, 50)
+        XCTAssertNotNil(png)
+
+        guard case .image = await renderer.render("sequenceDiagram\n  Alice->>Bob: Hi\n  Bob-->>Alice: Yo", kind: .mermaid, isDark: true, fontSize: 16) else {
+            return XCTFail("sequence diagram failed")
+        }
+
+        guard case .failure(let brokenMsg) = await renderer.render("flowchart TD\n  A -->", kind: .mermaid, isDark: false, fontSize: 16) else {
+            return XCTFail("broken diagram rendered unexpectedly")
+        }
+        XCTAssertFalse(brokenMsg.isEmpty)
+
+        guard case .failure(let unsupportedMsg) = await renderer.render("gantt\n  title A", kind: .mermaid, isDark: false, fontSize: 16) else {
+            return XCTFail("unsupported diagram rendered unexpectedly")
+        }
+        XCTAssertFalse(unsupportedMsg.isEmpty)
+
+        guard case .image(let math, let mathPng, let descent) = await renderer.render("x^2 + \\frac{1}{y}", kind: .inlineMath, isDark: false, fontSize: 16) else {
+            return XCTFail("math failed")
+        }
+        XCTAssertGreaterThan(descent, 0)
+        XCTAssertLessThan(math.size.height, 60)
+        XCTAssertNotNil(mathPng)
+
+        guard case .failure = await renderer.render("\\frac{", kind: .displayMath, isDark: false, fontSize: 16) else {
+            return XCTFail("broken TeX rendered unexpectedly")
+        }
     }
 }

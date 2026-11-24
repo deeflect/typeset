@@ -12,7 +12,9 @@ let package = Package(
     dependencies: [
         .package(path: "../TypesetCore"),
         .package(url: "https://github.com/apple/swift-markdown.git", exact: "0.8.0"),
-        .package(url: "https://github.com/raspu/Highlightr.git", exact: "2.3.0")
+        .package(url: "https://github.com/raspu/Highlightr.git", exact: "2.3.0"),
+        .package(url: "https://github.com/Australware/swift-mermaid.git", exact: "0.3.0"),
+        .package(url: "https://github.com/mgriebling/SwiftMath.git", exact: "1.7.3")
     ],
     targets: [
         .target(
@@ -20,7 +22,9 @@ let package = Package(
             dependencies: [
                 "TypesetCore",
                 .product(name: "Markdown", package: "swift-markdown"),
-                "Highlightr"
+                "Highlightr",
+                .product(name: "Mermaid", package: "swift-mermaid"),
+                "SwiftMath"
             ]
         ),
         .testTarget(name: "TypesetRenderingTests", dependencies: ["TypesetRendering", "TypesetCore"])

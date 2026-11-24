@@ -7,7 +7,7 @@
 
 ## Generate the project
 
-The `.xcodeproj` is generated, not checked in. `project.yml` is the source of truth for all targets (the `Typeset` app, the `TypesetQuickLook` Quick Look extension, and their test bundles):
+The `.xcodeproj` is generated, not checked in. `project.yml` is the source of truth for all targets (the `Typeset` app, the `TypesetQuickLook` preview extension, the `TypesetQuickLookThumbnail` thumbnail extension, and their test bundles):
 
 ```sh
 xcodegen generate
@@ -56,12 +56,14 @@ Hand-written fixtures live in `Tests/Fixtures/*.md`. Large synthetic files for p
 Config/App.xcconfig           App identity (name, bundle ID, version)
 project.yml                   XcodeGen project spec
 App/Sources/Typeset/          App target: SwiftUI shell, views, file watcher, editing
-App/Sources/TypesetQuickLook/ Quick Look extension
+App/Sources/TypesetQuickLook/ Quick Look preview extension
+App/Sources/TypesetQuickLookThumbnail/ Quick Look thumbnail extension
 App/Tests/                    App and Quick Look XCTest suites
 Packages/TypesetCore/         Block model, parser, differ
 Packages/TypesetRendering/    Theme and native rendered document, shared by app and Quick Look
 Tests/Fixtures/               Markdown fixtures
-Scripts/                      Fixture generation, headless snapshots, release archive
+Scripts/                      Fixture generation, CLI shim, headless snapshots, release archive
+docs/cli-and-agents.md        CLI installation and agent hook recipe
 ```
 
 Third-party licences are listed in `App/Sources/Typeset/Resources/ThirdPartyNotices.md`.

@@ -1,0 +1,42 @@
+#!/bin/sh
+# Open Markdown files, folders, or piped stdin in Typeset.
+set -eu
+
+BUNDLE_ID="${TYPESET_BUNDLE_ID:-com.deeflect.typeset}"
+
+usage() {
+  cat <<'EOF'
+Usage: typeset [file.md | folder | -] ...
+
+Options:
+  -h, --help    Show this help message
+  -             Read Markdown from standard input into a temporary file
+EOF
+}
+
+case "${1:-}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+esac
+
+if [ "$#" -eq 0 ]; then
+  exec open -b "$BUNDLE_ID"
+fi
+
+if [ "$#" -eq 1 ] && [ "$1" = "-" ]; then
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/typeset-stdin.XXXXXX")
+  file="$dir/stdin.md"
+  cat > "$file"
+  exec open -b "$BUNDLE_ID" "$file"
+fi
+
+for target in "$@"; do
+  if [ ! -e "$target" ]; then
+    echo "typeset: $target: No such file or directory" >&2
+    exit 1
+  fi
+done
+
+exec open -b "$BUNDLE_ID" -- "$@"
