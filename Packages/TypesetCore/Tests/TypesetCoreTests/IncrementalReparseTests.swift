@@ -48,6 +48,12 @@ struct IncrementalReparseTests {
         assertIncrementalMatchesFullReparse(oldText: old, newText: new)
     }
 
+    @Test func editingUnicodeTextAdjacentToLineBoundaries() {
+        let old = "# 読書\n\nCafé 🧑🏽‍💻\n\u{0301} continuation\n\nAfter\n\nLast\n"
+        let new = old.replacingOccurrences(of: "Café 🧑🏽‍💻", with: "本 📖")
+        assertIncrementalMatchesFullReparse(oldText: old, newText: new)
+    }
+
     @Test func editingInsideACodeFence() {
         let old = makeDocument(sectionCount: 20)
         let new = old.replacingOccurrences(of: "let value_10 = 10", with: "let value_10 = 999")

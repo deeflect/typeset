@@ -62,8 +62,8 @@ extension MarkdownParser {
         guard oldBody != newBody else { return oldBlocks }
 
         let ordinalOffset = oldFrontmatter != nil ? 1 : 0
-        let oldBodyLines = oldBody.split(separator: "\n", omittingEmptySubsequences: false)
-        let newBodyLines = newBody.split(separator: "\n", omittingEmptySubsequences: false)
+        let oldBodyLines = splitNormalizedLines(oldBody)
+        let newBodyLines = splitNormalizedLines(newBody)
 
         // Longest common leading run of lines.
         var commonPrefixLines = 0
@@ -176,6 +176,12 @@ extension MarkdownParser {
         }
 
         return parse(newText)
+    }
+
+    private static func splitNormalizedLines(_ body: String) -> [Substring] {
+        // LF is a single UTF-8 byte and a grapheme boundary after normalization.
+        body.utf8.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: false)
+            .map { body[$0.startIndex..<$0.endIndex] }
     }
 
     private static func spliceResult(
